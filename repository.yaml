@@ -2,5 +2,5 @@
 # (this project) beside it as `dime_dinner/`. Then add the repository URL in
 # Home Assistant: Settings > Add-ons > Add-on Store > ⋮ > Repositories.
 name: Dime Dinner Add-ons
-url: https://github.com/dime-dinner/dime-dinner
+url: https://github.com/speaks5527/dime-dinner-home-assistant
 maintainer: Dime Dinner <noreply@example.com>

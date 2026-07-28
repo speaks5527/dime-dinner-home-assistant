@@ -1,7 +1,11 @@
+# Alpine 3.19 is end-of-life, so `apk add nodejs` against its package repos is
+# no longer reliable. 3.21 ships Node.js 22 LTS, which both better-sqlite3 11
+# and Vite 7 support. The Dockerfile carries the same version as its ARG
+# default, for Supervisor versions that ignore this file.
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.19
-  amd64: ghcr.io/home-assistant/amd64-base:3.19
-  armv7: ghcr.io/home-assistant/armv7-base:3.19
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.21
+  amd64: ghcr.io/home-assistant/amd64-base:3.21
+  armv7: ghcr.io/home-assistant/armv7-base:3.21
 labels:
   org.opencontainers.image.title: Dime Dinner
   org.opencontainers.image.description: Meal planner, grocery list and pantry panel for Home Assistant
