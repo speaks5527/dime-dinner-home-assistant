@@ -28,7 +28,13 @@ ENV NODE_ENV=production \
     PORT=5000 \
     DIME_DINNER_DB=/data/dime-dinner.db
 
-RUN apk add --no-cache nodejs
+# poppler-utils (main) gives pdfinfo/pdftotext/pdftoppm; tesseract-ocr and its
+# English traineddata (community) handle ebooks whose pages are flattened
+# images. On Alpine the language data is a separate package and is named
+# tesseract-ocr-data-eng, not tesseract-ocr-eng.
+RUN apk add --no-cache nodejs poppler-utils tesseract-ocr tesseract-ocr-data-eng \
+    && pdftotext -v \
+    && tesseract --list-langs
 
 WORKDIR /app
 COPY --from=builder /build/dist ./dist

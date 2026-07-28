@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Download, Heart, Loader2, Search, Trash2, Link2 } from "lucide-react";
+import { BookOpen, Download, Heart, Loader2, Search, Trash2, Link2 } from "lucide-react";
 import { Layout, PageHeader } from "@/components/Layout";
+import { EbookImportDialog } from "@/components/EbookImportDialog";
 import { RecipeImage, RecipeMeta } from "@/components/RecipeBits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -78,6 +80,7 @@ export default function RecipesPage() {
   const [query, setQuery] = useState("");
   const [importUrl, setImportUrl] = useState("");
   const [tab, setTab] = useState("library");
+  const [ebookOpen, setEbookOpen] = useState(false);
 
   const saved = useQuery<RecipeDTO[]>({ queryKey: ["/api/recipes"] });
   const search = useQuery<SearchResponse>({
@@ -145,7 +148,28 @@ export default function RecipesPage() {
           Works with any public recipe page that publishes schema.org Recipe data — that includes Eating on a Dime and
           most major recipe sites. Pages behind logins, paywalls or private networks are not fetched.
         </p>
+
+        <Separator className="my-4" />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">Got a recipe PDF or ebook?</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              Read a whole cookbook — including scanned or image-only ones — and pick the recipes you want.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            onClick={() => setEbookOpen(true)}
+            data-testid="button-open-ebook-import"
+          >
+            <BookOpen className="mr-2 h-4 w-4" /> Import PDF or ebook
+          </Button>
+        </div>
       </Card>
+
+      <EbookImportDialog open={ebookOpen} onOpenChange={setEbookOpen} />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-5">

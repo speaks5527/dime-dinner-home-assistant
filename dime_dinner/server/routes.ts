@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import type { Server } from "node:http";
 import { z } from "zod";
 import { storage } from "./storage";
@@ -33,11 +33,15 @@ import {
 import { callbackPort, krogerConfig, krogerRedirectUri, mealTimes, isValidTime, resetConfigCache } from "./lib/config";
 import { buildIcs, type CalendarEvent } from "./lib/ics";
 import { sanitizeText } from "./lib/recipeParser";
+import { cancelJob, getJob, getThumbnail, startImport } from "./lib/importJobs";
+import { MAX_PDF_BYTES, PdfToolError, sanitizeFilename, toolStatus } from "./lib/pdfTools";
 import {
   DAY_NAMES,
   MEALS,
+  type EbookSaveResult,
   type GroceryLine,
   type GroceryResponse,
+  type InstructionGroup,
   type KrogerAuthState,
   type KrogerCartResult,
   type KrogerStatus,
@@ -50,7 +54,7 @@ import {
 const weekRe = /^\d{4}-\d{2}-\d{2}$/;
 
 function fail(res: Response, err: unknown) {
-  if (err instanceof FetchRejected || err instanceof KrogerError) {
+  if (err instanceof FetchRejected || err instanceof KrogerError || err instanceof PdfToolError) {
     return res.status(err.status).json({ message: err.message });
   }
   if (err instanceof RateLimited) return res.status(429).json({ message: err.message });
@@ -262,6 +266,175 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await importFromUrl(body.url);
       const saved = storage.upsertRecipe({ ...result.recipe, sourceUrl: result.sourceUrl });
       res.json({ recipe: saved, source: result.source, notice: result.notice });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  /* ----------------------------- ebook import ----------------------------- */
+
+  /**
+   * Reading an ebook takes minutes, so these routes only ever start work and
+   * report on it. Nothing here writes a recipe: the job holds candidates in
+   * memory until the user picks from them at /api/ebook/:id/save.
+   */
+
+  app.get("/api/ebook/tools", async (_req, res) => {
+    try {
+      res.json(await toolStatus());
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  app.post("/api/ebook/url", (req, res) => {
+    try {
+      const body = z.object({ url: z.string().min(4).max(2048) }).parse(req.body);
+      res.json(startImport({ kind: "url", url: body.url }));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  /**
+   * The PDF arrives as a raw body rather than multipart: it is a single file
+   * with no other fields, so a parser dependency would buy nothing. Express
+   * enforces the size cap before the body reaches this handler.
+   */
+  app.post(
+    "/api/ebook/upload",
+    express.raw({ type: ["application/pdf", "application/octet-stream"], limit: MAX_PDF_BYTES }),
+    (req, res) => {
+      try {
+        const data = req.body;
+        if (!Buffer.isBuffer(data) || !data.length) {
+          throw new PdfToolError("No PDF was received. Choose a file and try again.", 400);
+        }
+        if (!data.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+          throw new PdfToolError("That file is not a PDF.", 415);
+        }
+        const filename = sanitizeFilename(String(req.query.filename ?? "ebook.pdf"), "ebook.pdf");
+        res.json(startImport({ kind: "upload", filename, data }));
+      } catch (err) {
+        fail(res, err);
+      }
+    },
+  );
+
+  app.get("/api/ebook/:id", (req, res) => {
+    const job = getJob(String(req.params.id));
+    if (!job) return res.status(404).json({ message: "That import has expired or was cancelled." });
+    res.json(job);
+  });
+
+  app.delete("/api/ebook/:id", (req, res) => {
+    const cancelled = cancelJob(String(req.params.id));
+    if (!cancelled) return res.status(404).json({ message: "That import is no longer running." });
+    res.json({ ok: true });
+  });
+
+  /** Ephemeral page previews. They live in the job and die with it. */
+  app.get("/api/ebook/:id/page/:page.png", (req, res) => {
+    const page = Number(req.params.page);
+    if (!Number.isInteger(page) || page < 1) return res.status(400).end();
+    const png = getThumbnail(String(req.params.id), page);
+    if (!png) return res.status(404).end();
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(png);
+  });
+
+  /**
+   * Save the recipes the user selected — and only those.
+   *
+   * Like the Kroger cart confirm, this needs an explicit flag and the count the
+   * user was shown, so a job that changed underneath the review cannot cause
+   * something unseen to be written. Titles, ingredients and steps come from the
+   * request because the review screen lets the user correct OCR before saving.
+   */
+  app.post("/api/ebook/:id/save", (req, res) => {
+    try {
+      const body = z
+        .object({
+          confirm: z.literal(true),
+          selections: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(64),
+                title: z.string().min(1).max(200),
+                ingredients: z.array(z.string().min(1).max(400)).min(1).max(120),
+                instructions: z
+                  .array(
+                    z.object({
+                      heading: z.string().max(120).optional(),
+                      steps: z.array(z.object({ text: z.string().min(1).max(2000) })).min(1),
+                    }),
+                  )
+                  .min(1)
+                  .max(20),
+                description: z.string().max(2000).nullish(),
+                servings: z.string().max(120).nullish(),
+                totalMinutes: z.number().int().min(0).max(100_000).nullish(),
+              }),
+            )
+            .min(1)
+            .max(60),
+        })
+        .parse(req.body);
+
+      const id = String(req.params.id);
+      const job = getJob(id);
+      if (!job) throw new PdfToolError("That import has expired. Run it again to pick recipes.", 410);
+      if (job.phase !== "ready") throw new PdfToolError("That import is not finished yet.", 409);
+
+      const byId = new Map(job.candidates.map((c) => [c.id, c]));
+      const saved: RecipeDTO[] = [];
+      const skipped: EbookSaveResult["skipped"] = [];
+
+      for (const selection of body.selections) {
+        const candidate = byId.get(selection.id);
+        if (!candidate) {
+          skipped.push({ title: selection.title, reason: "No longer part of this import." });
+          continue;
+        }
+
+        const instructions: InstructionGroup[] = selection.instructions.map((group) => ({
+          ...(group.heading ? { heading: sanitizeText(group.heading) } : {}),
+          steps: group.steps.map((step) => ({ text: sanitizeText(step.text) })).filter((s) => s.text),
+        }));
+
+        // The source is the book, not a page that can be re-fetched. A stable
+        // per-page key keeps re-importing the same recipe an update rather than
+        // a duplicate, and keeps the attribution attached to the recipe.
+        const sourceUrl = job.sourceUrl
+          ? `${job.sourceUrl}#page=${candidate.pages[0]}`
+          : `dime-dinner:ebook/${encodeURIComponent(job.filename)}#page=${candidate.pages[0]}`;
+
+        saved.push(
+          storage.upsertRecipe({
+            sourceUrl,
+            title: sanitizeText(selection.title),
+            description: selection.description ? sanitizeText(selection.description) : candidate.description,
+            // Book pages are the publisher's artwork, so nothing is copied out
+            // of the PDF — only the text the user reviewed is kept.
+            imageUrl: null,
+            author: job.author,
+            prepMinutes: null,
+            cookMinutes: null,
+            totalMinutes: selection.totalMinutes ?? candidate.totalMinutes,
+            servings: selection.servings ? sanitizeText(selection.servings) : candidate.servings,
+            categories: [],
+            cuisines: [],
+            ingredients: selection.ingredients.map((line) => sanitizeText(line)).filter(Boolean),
+            instructions: instructions.filter((group) => group.steps.length),
+            nutrition: candidate.nutrition,
+            siteName: job.title ?? job.filename,
+          }),
+        );
+      }
+
+      const payload: EbookSaveResult = { saved, skipped };
+      res.json(payload);
     } catch (err) {
       fail(res, err);
     }

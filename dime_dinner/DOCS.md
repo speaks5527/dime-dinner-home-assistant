@@ -5,6 +5,8 @@ left sidebar (via add-on ingress) and does not create any entities, services or 
 
 - **Recipes** — search the [Eating on a Dime](https://www.eatingonadime.com/) catalog, or paste
   a link from any public recipe site that publishes schema.org Recipe data.
+- **PDF and ebook import** — read a whole cookbook, pick the recipes you want. Scanned or
+  image-only PDFs are recognised on-device with Tesseract; no cloud OCR and no accounts.
 - **Cooking Mode** — one big step at a time, hero image, progress bar, expandable ingredient
   list, keyboard shortcuts and an optional keep-screen-awake toggle.
 - **Weekly planner** — seven days, lunch and dinner slots.
@@ -189,6 +191,74 @@ performed, no product database is built, and lookups are cached for minutes rath
 
 ---
 
+## Importing a PDF or ebook
+
+**Recipes → Import PDF or ebook** reads a whole cookbook and lets you pick the recipes you want out
+of it. It is a separate flow from the single-page URL importer, which is unchanged.
+
+### Giving it a book
+
+Either **upload a PDF** from your device, or **paste a link**. A link may be:
+
+- a direct PDF URL,
+- a **Dropbox** share link — the `?dl=0` form is rewritten to its direct download form, keeping the
+  durable `rlkey` and dropping the short-lived `st` signature, so it does not depend on a preview
+  page's CDN URL (those expire within minutes),
+- a **Google Drive** viewer link, rewritten the same way, or
+- an **HTML landing page** that carries a download link. The PDF links on the page are ranked and the
+  winner is named on screen before it is read, with the runners-up listed so you can see what else
+  was on offer.
+
+Links that need a sign-in, folder shares, and pages with no PDF on them are refused with an
+explanation rather than a generic failure.
+
+### Reading it
+
+Text is taken from the PDF's own text layer with `pdftotext`. When that layer is missing or too thin
+to be the real content — as it is for a cookbook exported as flattened page images — every page is
+rendered at 165 DPI and recognised with **Tesseract**, on your own hardware. There is no cloud OCR,
+no API key and no account; nothing leaves your network.
+
+The work runs in the background with live progress (resolving, downloading, page count, recognising
+page N of M, detecting recipes) and a **Cancel** button. The HTTP request never blocks, so the panel
+stays responsive and a long book does not time out.
+
+### Choosing what to keep
+
+Detected recipes are shown on a **review screen** before anything is saved. Each one shows its title,
+the page it came from, its ingredients, its method, a confidence score and any warnings — and every
+field is editable. Pages that are a table of contents, a meal plan or a tips spread are excluded and
+counted, so you can see the book was read in full. Nothing is invented: an unreadable title stays
+empty, says so, and is not pre-selected for you.
+
+Only the recipes you tick are saved, and only after an explicit confirmation. Each keeps the source
+book's title, author and page number for attribution.
+
+### Limits and what is stored
+
+| Limit                | Value                                            |
+| -------------------- | ------------------------------------------------ |
+| File size            | 25 MB                                            |
+| Pages                | 60                                               |
+| Concurrent OCR pages | 2                                                |
+| Concurrent jobs      | 4                                                |
+| Job lifetime         | 30 minutes, then expired and deleted             |
+
+Every job owns one directory under `/tmp`, deleted on success, failure, cancellation or expiry;
+orphans left by a restart are swept at startup. The PDF is downloaded transiently and deleted — it is
+never redistributed and no copy of it is kept once the job ends. Page previews shown during review
+are held in memory and die with the job; no page image is ever stored alongside a saved recipe.
+
+Poppler and Tesseract are invoked directly with an argument list and no shell, and uploaded filenames
+are reduced to a safe leaf, so nothing in a name can be executed. The same SSRF defences as the URL
+importer apply to the landing page, every redirect hop and the download itself.
+
+Dime Dinner is an independent personal tool and is not affiliated with, endorsed by or sponsored by
+any book's publisher or author. Import only books you are entitled to read, and keep what you import
+for your own use.
+
+---
+
 ## Skylight exports
 
 Skylight has no documented public API for pushing lists or calendars, so Dime Dinner never signs in
@@ -213,10 +283,13 @@ re-published, requests are rate-limited per host with a descriptive user agent, 
 keeps a prominent link back to its source. Dime Dinner is an independent personal tool and is not
 affiliated with, endorsed by or sponsored by Eating on a Dime, Kroger or Skylight.
 
+A PDF or ebook is read the same way: on demand, once, locally, and only into the recipes you choose
+to keep. The file itself is deleted as soon as the job ends.
+
 Import safety: only `http(s)` URLs are fetched; localhost, private, link-local, carrier-grade NAT
 and cloud metadata addresses are rejected before and after DNS resolution and on every redirect;
 redirects, response size and request time are capped; and all stored text is sanitized before it is
-rendered.
+rendered. External tools are run without a shell.
 
 ---
 
@@ -231,11 +304,20 @@ npm run build    # dist/public + dist/index.cjs
 npm start        # production server
 ```
 
+Reading a scanned PDF needs `poppler-utils` and `tesseract-ocr` with English data on the development
+machine too; without them the app still runs and the OCR tests skip themselves.
+
 The test suite covers the recipe parser, ingredient handling, grocery/pantry deduction, SSRF
-defences, `.ics` generation, and the Kroger integration: the OAuth authorize URL and state
-lifecycle, the callback exchange, token refresh, cart payload construction and partial failures,
-match classification and review sessions, and the explicit-confirmation guard exercised through the
-real HTTP route. No test contacts Kroger; `fetch` is stubbed throughout.
+defences, `.ics` generation, the Kroger integration (the OAuth authorize URL and state lifecycle, the
+callback exchange, token refresh, cart payload construction and partial failures, match
+classification and review sessions, and the explicit-confirmation guard exercised through the real
+HTTP route), and the ebook importer: filename sanitising, PDF metadata and page limits, text-layer
+extraction and the sparseness heuristic, job directory creation and the orphan sweep, Dropbox and
+Drive link rewriting, landing-page link ranking, SSRF refusals on the landing page and on every
+redirect hop, download size caps and sign-in detection, the whole job lifecycle over real HTTP
+including cancel and cleanup, multi-recipe detection with contents pages excluded, OCR of a generated
+image-only PDF, and the explicit-save guard. Fixture PDFs are generated in the test, not committed.
+No test contacts Kroger or any other network host; `fetch` is stubbed throughout.
 
 | Variable                     | Default                | Purpose                                                    |
 | ---------------------------- | ---------------------- | ---------------------------------------------------------- |
@@ -244,11 +326,20 @@ real HTTP route. No test contacts Kroger; `fetch` is stubbed throughout.
 | `DIME_DINNER_OPTIONS`        | —                      | Path to an add-on options JSON file.                        |
 | `DIME_DINNER_KROGER_TOKENS`  | `/data/kroger-oauth.json` | Path to the OAuth token file; same `./data/` fallback.   |
 | `DIME_DINNER_CALLBACK_PORT`  | `8099`                 | Port for the OAuth callback listener.                       |
+| `DIME_DINNER_TMP`            | system temp dir        | Where ebook import jobs put their scratch directories.      |
 
 ## Limitations
 
 - Browse/search covers Eating on a Dime only; other sites are supported through URL import.
 - Sites that do not publish schema.org Recipe data cannot be imported.
+- Ebook import reads PDFs. EPUB and other ebook formats are not supported; export to PDF first.
+- OCR is English only, and its accuracy depends on the scan. Review every recognised recipe before
+  saving it — that is what the review screen is for.
+- A book is capped at 25 MB and 60 pages, and OCR of a long book takes minutes on Home Assistant
+  hardware.
+- Recipe detection relies on a book laying its recipes out conventionally (a heading, an ingredients
+  list, then a method). Free-form or heavily columnar layouts may be missed or split oddly.
+- An ebook import job and its page previews expire after 30 minutes; reopening starts a fresh read.
 - Pantry deduction never converts between weight and volume, so those lines are flagged rather than
   reduced.
 - Kroger data is informational, not a live inventory feed.

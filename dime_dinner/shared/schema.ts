@@ -348,3 +348,80 @@ export type KrogerCartResult = {
   authExpired: boolean;
   cartUrl: string;
 };
+
+/* ---------- ebook / PDF import ---------- */
+
+/**
+ * At or above this a candidate was read cleanly enough to be pre-selected on
+ * the review screen. Below it, the warnings lead and the user has to opt in.
+ */
+export const EBOOK_CONFIDENT = 0.7;
+
+export type EbookRecipeCandidate = {
+  id: string;
+  title: string | null;
+  /** 1-based pages of the source PDF this was read from */
+  pages: number[];
+  ingredients: string[];
+  instructions: InstructionGroup[];
+  description: string | null;
+  notes: string[];
+  servings: string | null;
+  totalMinutes: number | null;
+  nutrition: Record<string, string> | null;
+  /** 0–1; below 0.7 the review screen leads with the warnings */
+  confidence: number;
+  warnings: string[];
+};
+
+export type EbookJobPhase =
+  | "resolving"
+  | "downloading"
+  | "reading"
+  | "extracting"
+  | "ocr"
+  | "detecting"
+  | "ready"
+  | "failed"
+  | "cancelled";
+
+export type EbookImportJob = {
+  id: string;
+  phase: EbookJobPhase;
+  message: string;
+  percent: number;
+  filename: string;
+  sourceUrl: string | null;
+  landingUrl: string | null;
+  /** how the PDF was chosen, when the user pasted a landing page */
+  resolution: string | null;
+  /** other PDF links on the page, for the "not this one?" hint */
+  alternatives: string[];
+  title: string | null;
+  author: string | null;
+  pageCount: number | null;
+  /** true when the pages were images and had to be recognised */
+  usedOcr: boolean;
+  candidates: EbookRecipeCandidate[];
+  skippedPages: number[];
+  warnings: string[];
+  error: string | null;
+  errorStatus: number | null;
+  expiresAt: number;
+};
+
+/** One recipe the user has reviewed, edited and chosen to save. */
+export type EbookSaveSelection = {
+  id: string;
+  title: string;
+  ingredients: string[];
+  instructions: InstructionGroup[];
+  description?: string | null;
+  servings?: string | null;
+  totalMinutes?: number | null;
+};
+
+export type EbookSaveResult = {
+  saved: RecipeDTO[];
+  skipped: { title: string; reason: string }[];
+};

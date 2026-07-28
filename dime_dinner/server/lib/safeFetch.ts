@@ -133,20 +133,23 @@ export async function assertPublicHost(hostname: string): Promise<void> {
 export type SafeFetchResult = { url: string; status: number; contentType: string; body: string };
 
 /**
- * Fetch a single public document with redirect validation, timeout and a size cap.
- * `accept` defaults to HTML.
+ * Follow a user-supplied URL to its final response, validating the shape and
+ * resolved addresses of every hop. The body is left unread so callers can
+ * decide between capped text and a streamed download.
  */
-export async function safeFetch(
+export async function safeRequest(
   rawUrl: string,
-  options: { accept?: string; timeoutMs?: number; maxBytes?: number } = {},
-): Promise<SafeFetchResult> {
+  options: { accept?: string; timeoutMs?: number; maxRedirects?: number; signal?: AbortSignal } = {},
+): Promise<{ response: Response; url: string }> {
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? MAX_BYTES;
+  const maxRedirects = options.maxRedirects ?? MAX_REDIRECTS;
   let current = validateUrlShape(rawUrl);
 
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
     await assertPublicHost(current.hostname);
     const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
@@ -162,31 +165,50 @@ export async function safeFetch(
       });
     } catch (err) {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      if (options.signal?.aborted) throw new FetchRejected("Cancelled.", 499);
       if ((err as Error).name === "AbortError") throw new FetchRejected("The site took too long to respond.", 504);
       throw new FetchRejected(`Could not reach ${current.hostname}.`, 502);
     }
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onAbort);
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw new FetchRejected("The site returned a redirect without a target.", 502);
-      if (hop === MAX_REDIRECTS) throw new FetchRejected("Too many redirects.", 502);
+      if (hop === maxRedirects) throw new FetchRejected("Too many redirects.", 502);
+      // Re-validating here is what stops an open redirect from walking us onto
+      // the Home Assistant host or a metadata endpoint.
       current = validateUrlShape(new URL(location, current).toString());
+      await response.body?.cancel().catch(() => {});
       continue;
     }
 
     if (!response.ok) {
       throw new FetchRejected(`The site responded with HTTP ${response.status}.`, response.status === 404 ? 404 : 502);
     }
-
-    const declared = Number(response.headers.get("content-length") ?? "0");
-    if (declared && declared > maxBytes) throw new FetchRejected("That page is too large to parse.", 413);
-
-    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
-    const body = await readCapped(response, maxBytes);
-    return { url: current.toString(), status: response.status, contentType, body };
+    return { response, url: current.toString() };
   }
   throw new FetchRejected("Too many redirects.", 502);
+}
+
+/**
+ * Fetch a single public document with redirect validation, timeout and a size cap.
+ * `accept` defaults to HTML.
+ */
+export async function safeFetch(
+  rawUrl: string,
+  options: { accept?: string; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+): Promise<SafeFetchResult> {
+  const maxBytes = options.maxBytes ?? MAX_BYTES;
+  const { response, url } = await safeRequest(rawUrl, options);
+
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared && declared > maxBytes) throw new FetchRejected("That page is too large to parse.", 413);
+
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  const body = await readCapped(response, maxBytes);
+  return { url, status: response.status, contentType, body };
 }
 
 async function readCapped(response: Response, maxBytes: number): Promise<string> {

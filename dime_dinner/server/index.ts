@@ -2,6 +2,8 @@ import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import { registerRoutes } from "./routes";
+import { cleanupOrphanedJobDirs } from "./lib/pdfTools";
+import { shutdownJobs } from "./lib/importJobs";
 import { serveStatic } from "./static";
 import { startCallbackServer } from "./callbackServer";
 import { log } from "./log";
@@ -62,6 +64,17 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // An add-on restart in the middle of an import leaves its temp directory
+  // behind, so sweep those before anything else can create new ones.
+  const orphans = await cleanupOrphanedJobDirs();
+  if (orphans) log(`removed ${orphans} leftover import folder${orphans === 1 ? "" : "s"}`);
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      shutdownJobs();
+      process.exit(0);
+    });
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

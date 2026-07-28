@@ -6,6 +6,10 @@ A Home Assistant add-on repository containing a single add-on:
 | ------------------------------- | --------------------------------------------------------------------------- |
 | [Dime Dinner](./dime_dinner/)   | Meal planner, recipe box, grocery list and pantry, as a sidebar panel.       |
 
+Recipes can be browsed from Eating on a Dime, imported from any public recipe page, or read out of a
+PDF cookbook — including scanned, image-only ones, which are recognised on your own hardware with
+Tesseract. No cloud OCR and no accounts.
+
 The panel itself is reached through the Home Assistant sidebar. One port, `8099/tcp`, is published,
 and only to receive the Kroger sign-in callback if you choose to connect a Kroger account — it serves
 that single path and nothing else.
@@ -28,8 +32,9 @@ that single path and nothing else.
 
 ## Documentation
 
-See [`dime_dinner/DOCS.md`](./dime_dinner/DOCS.md) for configuration options, Kroger product lookups,
-sending the grocery list to a Kroger cart, export formats and development instructions.
+See [`dime_dinner/DOCS.md`](./dime_dinner/DOCS.md) for configuration options, importing a PDF or
+ebook, Kroger product lookups, sending the grocery list to a Kroger cart, export formats and
+development instructions.
 [`dime_dinner/CHANGELOG.md`](./dime_dinner/CHANGELOG.md) lists what changed in each version.
 
 MIT licensed.
