@@ -352,7 +352,7 @@ export default function GroceryPage() {
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-          <div>
+          <div className="min-w-0">
             {aisles.map((aisle) => (
               <Card key={aisle} className="mb-4 border-card-border p-4" data-testid={`card-aisle-${aisle}`}>
                 <h2 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{aisle}</h2>

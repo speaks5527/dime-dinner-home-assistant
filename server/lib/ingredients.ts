@@ -430,16 +430,29 @@ const AISLE_RULES: [Aisle, string[]][] = [
 
 export function aisleFor(nameKey: string): Aisle {
   const n = ` ${nameKey.toLowerCase()} `;
-  // spices win over produce for things like "garlic powder"
-  const ordered: Aisle[] = ["Spices & Baking", "Frozen", "Canned & Jarred", "Meat & Seafood", "Dairy & Eggs", "Bakery", "Produce", "Pantry & Dry Goods"];
-  for (const aisle of ordered) {
-    const rule = AISLE_RULES.find(([a]) => a === aisle);
-    if (!rule) continue;
-    for (const kw of rule[1]) {
-      if (n.includes(` ${kw} `) || n.includes(`${kw}`)) return aisle;
+  // Spices win over produce for "garlic powder", but the *longest* keyword always
+  // wins first, so "bell pepper" lands in Produce rather than with the peppercorns.
+  const priority: Aisle[] = [
+    "Spices & Baking",
+    "Frozen",
+    "Canned & Jarred",
+    "Meat & Seafood",
+    "Dairy & Eggs",
+    "Bakery",
+    "Produce",
+    "Pantry & Dry Goods",
+  ];
+  let best: { aisle: Aisle; length: number; rank: number } | null = null;
+  for (const [aisle, keywords] of AISLE_RULES) {
+    const rank = priority.indexOf(aisle);
+    for (const kw of keywords) {
+      if (!n.includes(kw)) continue;
+      if (!best || kw.length > best.length || (kw.length === best.length && rank < best.rank)) {
+        best = { aisle, length: kw.length, rank };
+      }
     }
   }
-  return "Other";
+  return best?.aisle ?? "Other";
 }
 
 /** Pantry staples that an un-quantified pantry entry is allowed to fully cover. */
@@ -460,6 +473,10 @@ export type ParsedIngredient = {
   note: string | null;
   aisle: Aisle;
 };
+
+/** Tails that are preparation or packaging notes rather than part of the name. */
+const PREP_TAIL_RE =
+  /^(?:finely|freshly|coarsely|thinly|roughly|lightly|chopped|diced|minced|sliced|shredded|grated|crushed|melted|softened|divided|drained|rinsed|cubed|halved|quartered|peeled|seeded|cored|trimmed|thawed|beaten|room temperature|cut\b|plus\b|more\b|optional|to taste|for (?:garnish|serving|topping)|about\b|approximately\b|any\b|such as\b|or\b|packed\b|drained and\b|well drained)/i;
 
 /**
  * Parse one published ingredient line into structured parts.
@@ -505,12 +522,17 @@ export function parseIngredientLine(raw: string): ParsedIngredient {
   }
 
   remainder = remainder.replace(/^(?:of|de)\s+/i, "").trim();
-  // trailing ", diced" style prep
+  // trailing ", diced" style prep — only when the tail really is a prep note, so
+  // "boneless, skinless chicken breast" stays one ingredient.
   const commaSplit = remainder.split(",");
   if (commaSplit.length > 1) {
     const tail = commaSplit.slice(1).join(",").trim();
-    if (tail) notes.push(tail);
-    remainder = commaSplit[0].trim();
+    if (tail && PREP_TAIL_RE.test(tail)) {
+      notes.push(tail);
+      remainder = commaSplit[0].trim();
+    } else {
+      remainder = commaSplit.join(" ").replace(/\s+/g, " ").trim();
+    }
   }
 
   const displayName = remainder.replace(/\s+/g, " ").trim() || original;
@@ -561,10 +583,18 @@ export function fromBase(dimension: Dimension, value: number, system: "us" | "me
       : system === "metric"
         ? WEIGHT_LADDER_METRIC
         : WEIGHT_LADDER_US;
+  // Prefer the largest unit that still yields a cook-friendly number: 3 1/2 tsp
+  // reads better than 1.17 tbsp.
+  let fallback: Amount | null = null;
   for (const unit of ladder) {
     const def = UNIT_BY_CANONICAL.get(unit)!;
-    if (value >= def.factor - 1e-9) return { quantity: round(value / def.factor, 3), unit };
+    if (value < def.factor - 1e-9) continue;
+    const quantity = round(value / def.factor, 3);
+    if (fallback === null) fallback = { quantity, unit };
+    const eighths = quantity * 8;
+    if (Math.abs(eighths - Math.round(eighths)) < 0.06) return { quantity, unit };
   }
+  if (fallback) return fallback;
   const smallest = UNIT_BY_CANONICAL.get(ladder[ladder.length - 1])!;
   return { quantity: round(value / smallest.factor, 3), unit: smallest.canonical };
 }

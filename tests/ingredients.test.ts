@@ -134,3 +134,35 @@ describe("amount math", () => {
     expect(formatAmounts(combined.amounts)).toBe("1 1/4 lb");
   });
 });
+
+describe("real-world lines seen in the wild", () => {
+  it("keeps compound names split by commas together", () => {
+    const parsed = parseIngredientLine("3/4 lb. boneless, skinless chicken breast ($2.09)");
+    expect(parsed.key).toBe("boneless skinless chicken breast");
+    expect(parsed.aisle).toBe("Meat & Seafood");
+    expect(parsed.quantity).toBe(0.75);
+    expect(parsed.unit).toBe("lb");
+  });
+
+  it("still peels off genuine prep tails", () => {
+    const parsed = parseIngredientLine("1 yellow onion, finely diced");
+    expect(parsed.key).toBe("yellow onion");
+    expect(parsed.note).toContain("finely diced");
+  });
+
+  it("sends bell peppers to produce, peppercorns to spices", () => {
+    expect(parseIngredientLine("3 bell peppers").aisle).toBe("Produce");
+    expect(parseIngredientLine("1/2 teaspoon pepper").aisle).toBe("Spices & Baking");
+    expect(parseIngredientLine("1 teaspoon garlic powder").aisle).toBe("Spices & Baking");
+    expect(parseIngredientLine("3 cloves garlic").aisle).toBe("Produce");
+  });
+
+  it("prefers readable teaspoons over fractional tablespoons", () => {
+    const combined = combineAmounts([
+      { quantity: 1, unit: "tsp" },
+      { quantity: 1.5, unit: "tsp" },
+      { quantity: 1, unit: "tsp" },
+    ]);
+    expect(formatAmounts(combined.amounts)).toBe("3 1/2 tsp");
+  });
+});
