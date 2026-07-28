@@ -1,5 +1,5 @@
 name: Dime Dinner
-version: "1.0.1"
+version: "1.1.0"
 slug: dime_dinner
 description: >-
   Meal planner, recipe box, grocery list and pantry for Home Assistant. Browse
@@ -22,6 +22,15 @@ ingress_stream: false
 panel_icon: mdi:silverware-fork-knife
 panel_title: Dime Dinner
 panel_admin: false
+# The app itself stays ingress-only. This single published port serves nothing
+# but the Kroger OAuth redirect path, because a Home Assistant ingress URL
+# carries a rotating session token and so can never be registered as a static
+# OAuth callback. Set it to nothing to disable connecting a Kroger account;
+# everything else in the add-on keeps working.
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Kroger sign-in redirect only — no app, API or data is served here
 map:
   - addon_config:rw
 options:
@@ -30,6 +39,7 @@ options:
   kroger_client_secret: ""
   kroger_zip: ""
   kroger_location_id: ""
+  kroger_redirect_uri: ""
   lunch_time: "12:00"
   dinner_time: "18:00"
   timezone: ""
@@ -39,6 +49,7 @@ schema:
   kroger_client_secret: password?
   kroger_zip: str?
   kroger_location_id: str?
+  kroger_redirect_uri: str?
   lunch_time: match(^([01][0-9]|2[0-3]):[0-5][0-9]$)?
   dinner_time: match(^([01][0-9]|2[0-3]):[0-5][0-9]$)?
   timezone: str?

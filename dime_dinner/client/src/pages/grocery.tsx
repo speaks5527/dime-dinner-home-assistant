@@ -16,6 +16,7 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
+import { KrogerCartDialog } from "@/components/KrogerCartDialog";
 import { Layout, PageHeader } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -39,7 +40,13 @@ import {
   shiftWeek,
   weekStartOf,
 } from "@/lib/app";
-import type { GroceryLine, GroceryResponse, KrogerMatchResponse, KrogerStatus } from "@shared/schema";
+import type {
+  GroceryLine,
+  GroceryResponse,
+  KrogerAuthState,
+  KrogerMatchResponse,
+  KrogerStatus,
+} from "@shared/schema";
 
 function KrogerPanel({ line }: { line: GroceryLine }) {
   const { data, isLoading, isError, error } = useQuery<KrogerMatchResponse>({
@@ -227,8 +234,9 @@ export default function GroceryPage() {
   const { toast } = useToast();
   const [weekStart, setWeekStart] = useState(weekStartOf());
   const [manualText, setManualText] = useState("");
+  const [cartOpen, setCartOpen] = useState(false);
   const grocery = useQuery<GroceryResponse>({ queryKey: ["/api/grocery", weekStart] });
-  const settings = useQuery<{ kroger: KrogerStatus }>({ queryKey: ["/api/settings"] });
+  const settings = useQuery<{ kroger: KrogerStatus; krogerAuth: KrogerAuthState }>({ queryKey: ["/api/settings"] });
 
   const apply = (data: GroceryResponse) => queryClient.setQueryData(["/api/grocery", weekStart], data);
 
@@ -271,6 +279,10 @@ export default function GroceryPage() {
 
   const data = grocery.data;
   const krogerOn = !!settings.data?.kroger.enabled && !!settings.data?.kroger.configured;
+  const auth = settings.data?.krogerAuth;
+  const cartReady = !!auth?.connected && auth.hasCartScope && !!settings.data?.kroger.enabled;
+  const unbought =
+    (data?.lines.filter((l) => !l.checked).length ?? 0) + (data?.manual.filter((m) => m.checked !== 1).length ?? 0);
   const aisles = data ? Array.from(new Set(data.lines.map((line) => line.aisle))) : [];
   const checkedCount = (data?.lines.filter((l) => l.checked).length ?? 0) + (data?.manual.filter((m) => m.checked === 1).length ?? 0);
   const totalCount = (data?.lines.length ?? 0) + (data?.manual.length ?? 0);
@@ -451,9 +463,39 @@ export default function GroceryPage() {
                 Nothing moves into your pantry automatically — this button is the only way items get added from a shop.
               </p>
             </Card>
+
+            <Card className="no-print border-card-border p-4" data-testid="card-kroger-cart">
+              <h2 className="flex items-center gap-2 text-sm font-medium">
+                <ShoppingCart className="h-4 w-4 text-primary" /> Kroger cart
+              </h2>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Put the {unbought} unchecked item{unbought === 1 ? "" : "s"} into your own Kroger cart. You review every
+                product and confirm before anything is added.
+              </p>
+              <Button
+                className="mt-3 w-full"
+                disabled={!cartReady || unbought === 0}
+                onClick={() => setCartOpen(true)}
+                data-testid="button-build-kroger-cart"
+              >
+                <ShoppingCart className="mr-2 h-4 w-4" /> Build Kroger cart
+              </Button>
+              {!cartReady && (
+                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground" data-testid="text-cart-unavailable">
+                  {auth?.connected && !auth.hasCartScope
+                    ? "Your Kroger sign-in did not include cart access. Enable the Cart API on your Kroger application, then reconnect in Settings."
+                    : "Connect your Kroger account in Settings first."}
+                </p>
+              )}
+              {cartReady && unbought === 0 && (
+                <p className="mt-2 text-[11px] text-muted-foreground">Everything on this list is already checked off.</p>
+              )}
+            </Card>
           </div>
         </div>
       )}
+
+      <KrogerCartDialog weekStart={weekStart} open={cartOpen} onOpenChange={setCartOpen} />
 
       {/* Hidden print layout */}
       <div id="grocery-print" className="hidden">

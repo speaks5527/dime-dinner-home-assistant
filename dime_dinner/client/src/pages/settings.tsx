@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Info, Loader2, Store } from "lucide-react";
+import { KrogerAccountCard } from "@/components/KrogerAccountCard";
 import { Layout, PageHeader } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,10 +11,11 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { postJson } from "@/lib/app";
-import type { KrogerStatus } from "@shared/schema";
+import type { KrogerAuthState, KrogerStatus } from "@shared/schema";
 
 type SettingsResponse = {
   kroger: KrogerStatus;
+  krogerAuth: KrogerAuthState;
   mealTimes: { lunch: string; dinner: string; timezone: string };
 };
 
@@ -71,7 +73,11 @@ export default function SettingsPage() {
     mutationFn: () => postJson("/api/settings/kroger/clear"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-      toast({ title: "Kroger credentials cleared" });
+      queryClient.invalidateQueries({ queryKey: ["/api/kroger/auth/status"] });
+      toast({
+        title: "Kroger credentials cleared",
+        description: "The connected Kroger account was disconnected too.",
+      });
     },
   });
 
@@ -189,6 +195,10 @@ export default function SettingsPage() {
           {save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Save settings
         </Button>
+      </div>
+
+      <div className="mt-6">
+        <KrogerAccountCard auth={data?.krogerAuth} />
       </div>
 
       <Card className="mt-6 border-card-border bg-muted/40 p-5">

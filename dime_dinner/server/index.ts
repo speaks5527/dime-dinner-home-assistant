@@ -3,6 +3,8 @@ import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { startCallbackServer } from "./callbackServer";
+import { log } from "./log";
 import { createServer } from "node:http";
 
 const app = express();
@@ -24,16 +26,14 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+export { log };
 
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
+/**
+ * Response bodies from the Kroger account endpoints are kept out of the log.
+ * They hold no tokens by construction, but the consent URL carries a one-time
+ * state value and there is no reason for any of it to sit in the add-on log.
+ */
+const UNLOGGED_BODY_PREFIXES = ["/api/kroger/auth", "/api/kroger/oauth"];
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -50,7 +50,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      if (capturedJsonResponse && !UNLOGGED_BODY_PREFIXES.some((prefix) => path.startsWith(prefix))) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
@@ -102,4 +102,8 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  // Ingress URLs are not registrable as an OAuth callback, so the Kroger
+  // redirect lands on its own single-purpose listener instead.
+  startCallbackServer();
 })();

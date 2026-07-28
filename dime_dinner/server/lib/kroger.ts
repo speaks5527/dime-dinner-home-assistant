@@ -133,6 +133,10 @@ function mapProduct(raw: any): KrogerProduct {
     sizes.find((s) => s?.size === "medium") ?? sizes.find((s) => s?.size === "large") ?? sizes[0];
   return {
     productId: String(raw?.productId ?? ""),
+    // The Cart API keys on the UPC. It usually equals productId for a base
+    // product, but the two are separate fields and only this one is documented
+    // as the cart identifier, so it is carried through explicitly.
+    upc: raw?.upc ? String(raw.upc) : String(raw?.productId ?? ""),
     description: String(raw?.description ?? ""),
     brand: raw?.brand ? String(raw.brand) : null,
     size: item?.size ? String(item.size) : null,

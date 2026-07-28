@@ -6,7 +6,31 @@ import { aggregateIngredients, applyPantry, visibleLines } from "./lib/grocery";
 import { parseIngredientLine, formatAmount } from "./lib/ingredients";
 import { importFromUrl, searchCatalog, FetchRejected, RateLimited } from "./lib/source";
 import { KrogerError, KROGER_DISCLAIMER, matchProducts, resolveLocation, resetKrogerCaches } from "./lib/kroger";
-import { krogerConfig, mealTimes, isValidTime, resetConfigCache } from "./lib/config";
+import {
+  authStatus,
+  buildAuthorizeUrl,
+  disconnect as disconnectKroger,
+  getCustomerAccessToken,
+  KrogerAuthRequired,
+  validateRedirectUri,
+} from "./lib/krogerAuth";
+import {
+  addItemsToCart,
+  CART_MODALITIES,
+  KROGER_CART_URL,
+  MAX_CART_QUANTITY,
+  type CartModality,
+} from "./lib/krogerCart";
+import {
+  createReview,
+  deleteReview,
+  getReview,
+  isReady,
+  patchReviewItem,
+  selectedProduct,
+  type ReviewLine,
+} from "./lib/krogerReview";
+import { callbackPort, krogerConfig, krogerRedirectUri, mealTimes, isValidTime, resetConfigCache } from "./lib/config";
 import { buildIcs, type CalendarEvent } from "./lib/ics";
 import { sanitizeText } from "./lib/recipeParser";
 import {
@@ -14,6 +38,8 @@ import {
   MEALS,
   type GroceryLine,
   type GroceryResponse,
+  type KrogerAuthState,
+  type KrogerCartResult,
   type KrogerStatus,
   type PlanEntry,
   type PlanResponse,
@@ -91,6 +117,91 @@ function buildGrocery(weekStart: string): GroceryResponse {
     manual: storage.listManual(weekStart),
     pantryCoveredCount: withPantry.filter((l) => l.pantry && l.pantry.status !== "noted" && !l.pantry.overridden).length,
   };
+}
+
+/** Everything the Settings page needs to describe the Kroger account link. */
+function krogerAuthState(): KrogerAuthState {
+  const config = krogerConfig();
+  const configured = krogerRedirectUri();
+  const status = authStatus();
+
+  let redirectUri = configured.value;
+  let redirectUriValid = true;
+  let redirectUriError: string | null = null;
+  try {
+    redirectUri = validateRedirectUri(configured.value);
+  } catch (err) {
+    redirectUriValid = false;
+    redirectUriError = (err as Error).message;
+  }
+
+  const credentialsReady = !!(config.clientId && config.clientSecret);
+  const message = !config.enabled
+    ? "Turn Kroger on to connect an account."
+    : !credentialsReady
+      ? "Add your Kroger client ID and secret first."
+      : !redirectUriValid
+        ? "Fix the redirect URI before connecting."
+        : !status.connected
+          ? "Not connected. Connecting signs you in at Kroger and lets Dime Dinner build a cart for you to review."
+          : !status.hasCartScope
+            ? "Connected, but Kroger did not grant cart access. Enable the Cart API on your Kroger application and reconnect."
+            : "Connected. Dime Dinner can build a cart for you to review.";
+
+  return {
+    connected: status.connected,
+    connectedAt: status.connectedAt,
+    canRefresh: status.canRefresh,
+    hasCartScope: status.hasCartScope,
+    scopes: status.scopes,
+    redirectUri,
+    redirectUriValid,
+    redirectUriError,
+    redirectUriManagedByAddonOptions: configured.managedByAddonOptions,
+    callbackPort: callbackPort(),
+    credentialsReady,
+    message,
+  };
+}
+
+/**
+ * Grocery lines that are candidates for a Kroger cart: still unchecked, and
+ * already filtered of anything the pantry covers by buildGrocery.
+ */
+function cartCandidateLines(weekStart: string): ReviewLine[] {
+  const grocery = buildGrocery(weekStart);
+  const lines: ReviewLine[] = grocery.lines
+    .filter((line) => !line.checked)
+    .map((line) => ({ key: line.key, name: line.name, requestedDisplay: line.display }));
+
+  for (const item of grocery.manual) {
+    if (item.checked === 1) continue;
+    const parsed = parseIngredientLine(item.text);
+    lines.push({
+      key: `manual:${item.id}`,
+      name: parsed.name || item.text,
+      requestedDisplay: parsed.quantity != null ? formatAmount({ quantity: parsed.quantity, unit: parsed.unit }) : "",
+    });
+  }
+  return lines;
+}
+
+/** Refuse to go near the Cart API unless there is a usable customer grant. */
+function requireCartAccess(): { clientId: string; clientSecret: string } {
+  const config = krogerConfig();
+  if (!config.enabled) throw new KrogerError("Turn Kroger on first.", 400);
+  if (!config.clientId || !config.clientSecret) {
+    throw new KrogerError("Add your Kroger client ID and secret first.", 400);
+  }
+  const status = authStatus();
+  if (!status.connected) throw new KrogerAuthRequired("Connect your Kroger account in Settings first.");
+  if (!status.hasCartScope) {
+    throw new KrogerError(
+      "This Kroger sign-in did not include cart access. Enable the Cart API on your Kroger application, then disconnect and reconnect.",
+      403,
+    );
+  }
+  return { clientId: config.clientId, clientSecret: config.clientSecret };
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -446,7 +557,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           : "Add a client ID and secret to enable product lookups."
         : "Kroger integration is off. The rest of Dime Dinner works without it.",
     };
-    res.json({ kroger: status, mealTimes: times });
+    res.json({ kroger: status, krogerAuth: krogerAuthState(), mealTimes: times });
   });
 
   app.post("/api/settings", (req, res) => {
@@ -460,6 +571,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               clientSecret: z.string().max(200).optional(),
               zip: z.string().max(10).optional(),
               locationId: z.string().max(20).optional(),
+              redirectUri: z.string().max(300).optional(),
             })
             .optional(),
           mealTimes: z
@@ -481,6 +593,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
         if (k.zip !== undefined) storage.setSetting("kroger.zip", k.zip.trim());
         if (k.locationId !== undefined) storage.setSetting("kroger.locationId", k.locationId.trim());
+        if (k.redirectUri !== undefined) {
+          // Reject a malformed value here rather than letting it fail later as
+          // an opaque redirect_uri_mismatch from Kroger.
+          storage.setSetting("kroger.redirectUri", k.redirectUri.trim() ? validateRedirectUri(k.redirectUri) : "");
+        }
         resetKrogerCaches();
       }
       if (body.mealTimes) {
@@ -497,9 +614,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/settings/kroger/clear", (_req, res) => {
-    for (const key of ["kroger.enabled", "kroger.clientId", "kroger.clientSecret", "kroger.zip", "kroger.locationId"]) {
+    for (const key of [
+      "kroger.enabled",
+      "kroger.clientId",
+      "kroger.clientSecret",
+      "kroger.zip",
+      "kroger.locationId",
+      "kroger.redirectUri",
+    ]) {
       storage.deleteSetting(key);
     }
+    // The customer grant belongs to the application being cleared, so it goes too.
+    disconnectKroger();
     resetKrogerCaches();
     resetConfigCache();
     res.json({ ok: true });
@@ -529,6 +655,164 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const config = krogerConfig();
       const { products, locationId } = await matchProducts(config, term);
       res.json({ term, locationId, products, disclaimer: KROGER_DISCLAIMER });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  /* --------------------------- kroger account --------------------------- */
+
+  app.get("/api/kroger/auth/status", (_req, res) => res.json(krogerAuthState()));
+
+  /**
+   * Hand the client a consent URL to open. The URL is built here so the client
+   * ID, the scopes and the redirect URI all come from server configuration and
+   * none of them can be influenced by the request.
+   */
+  app.post("/api/kroger/auth/start", (_req, res) => {
+    try {
+      const config = krogerConfig();
+      if (!config.enabled) throw new KrogerError("Turn Kroger on first.", 400);
+      const redirectUri = validateRedirectUri(krogerRedirectUri().value);
+      const { url } = buildAuthorizeUrl(
+        { clientId: config.clientId, clientSecret: config.clientSecret },
+        redirectUri,
+      );
+      res.json({ authorizeUrl: url, redirectUri });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  app.post("/api/kroger/auth/disconnect", (_req, res) => {
+    disconnectKroger();
+    res.json({ ok: true, auth: krogerAuthState() });
+  });
+
+  /* ----------------------------- kroger cart ---------------------------- */
+
+  /** Build a review. This reads products only; it never touches the cart. */
+  app.post("/api/kroger/cart/review", async (req, res) => {
+    try {
+      requireCartAccess();
+      const body = z.object({ weekStart: z.string().regex(weekRe) }).parse(req.body);
+      const config = krogerConfig();
+      const location = await resolveLocation(config);
+      const review = await createReview({
+        weekStart: body.weekStart,
+        locationId: location?.locationId ?? null,
+        locationName: location?.name ?? null,
+        lines: cartCandidateLines(body.weekStart),
+        matcher: async (term) => (await matchProducts(config, term, 6)).products,
+        disclaimer: KROGER_DISCLAIMER,
+      });
+      res.json(review);
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  app.get("/api/kroger/cart/review/:id", (req, res) => {
+    try {
+      res.json(getReview(String(req.params.id)));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  app.patch("/api/kroger/cart/review/:id/items/:key", (req, res) => {
+    try {
+      const body = z
+        .object({
+          selectedUpc: z.string().max(32).nullable().optional(),
+          quantity: z.number().int().min(1).max(MAX_CART_QUANTITY).optional(),
+          modality: z.enum(CART_MODALITIES).optional(),
+          allowSubstitutes: z.boolean().optional(),
+          skipped: z.boolean().optional(),
+        })
+        .parse(req.body);
+      res.json(patchReviewItem(String(req.params.id), String(req.params.key), body));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  /** Widen the candidate list for one item with a user-supplied search term. */
+  app.post("/api/kroger/cart/review/:id/items/:key/search", async (req, res) => {
+    try {
+      requireCartAccess();
+      const body = z.object({ term: z.string().min(1).max(60) }).parse(req.body);
+      const term = sanitizeText(body.term).slice(0, 60);
+      const { products } = await matchProducts(krogerConfig(), term, 8);
+      res.json(patchReviewItem(String(req.params.id), String(req.params.key), { addCandidates: products }));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  app.delete("/api/kroger/cart/review/:id", (req, res) => {
+    deleteReview(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  /**
+   * The only route that writes to a Kroger cart.
+   *
+   * It requires an explicit confirmation flag plus the item count the user was
+   * actually shown: if the review changed after the summary was rendered, the
+   * count no longer agrees and the request is refused rather than adding
+   * something the user did not see. Items still needing a decision block the
+   * whole request, so an ambiguous match can never slip through.
+   */
+  app.post("/api/kroger/cart/review/:id/confirm", async (req, res) => {
+    try {
+      const credentials = requireCartAccess();
+      const body = z
+        .object({ confirm: z.literal(true), itemCount: z.number().int().min(1) })
+        .parse(req.body);
+
+      const id = String(req.params.id);
+      const review = getReview(id);
+      if (review.needsAttentionCount > 0) {
+        throw new KrogerError(
+          `${review.needsAttentionCount} item${review.needsAttentionCount === 1 ? "" : "s"} still need${review.needsAttentionCount === 1 ? "s" : ""} a product chosen or skipped.`,
+          409,
+        );
+      }
+      if (review.readyCount === 0) throw new KrogerError("Nothing is selected to add.", 400);
+      if (body.itemCount !== review.readyCount) {
+        throw new KrogerError(
+          `This list changed since you reviewed it — it now has ${review.readyCount} item${review.readyCount === 1 ? "" : "s"}. Check it over and confirm again.`,
+          409,
+        );
+      }
+
+      const ready = review.items.filter(isReady);
+      const outcome = await addItemsToCart(
+        () => getCustomerAccessToken(credentials),
+        ready.map((item) => ({
+          key: item.key,
+          name: item.name,
+          upc: selectedProduct(item)!.upc,
+          quantity: item.quantity,
+          modality: item.modality as CartModality,
+        })),
+      );
+
+      // Once anything is in the cart, re-running would double it up, so the
+      // review is discarded. A run that added nothing is left alone so the user
+      // can retry; it expires on its own either way.
+      if (outcome.addedCount > 0) deleteReview(id);
+
+      const payload: KrogerCartResult = {
+        addedCount: outcome.addedCount,
+        failedCount: outcome.failedCount,
+        results: outcome.results,
+        noSubstitutionReminders: ready.filter((item) => !item.allowSubstitutes).map((item) => item.name),
+        authExpired: outcome.authExpired,
+        cartUrl: KROGER_CART_URL,
+      };
+      res.json(payload);
     } catch (err) {
       fail(res, err);
     }

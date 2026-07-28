@@ -239,6 +239,8 @@ export type KrogerStatus = {
 
 export type KrogerProduct = {
   productId: string;
+  /** identifier the Cart API expects; 13 digits once normalized */
+  upc: string;
   description: string;
   brand: string | null;
   size: string | null;
@@ -256,4 +258,93 @@ export type KrogerMatchResponse = {
   locationId: string | null;
   products: KrogerProduct[];
   disclaimer: string;
+};
+
+/* ---------- Kroger customer account + cart building ---------- */
+
+export type KrogerAuthState = {
+  connected: boolean;
+  connectedAt: number | null;
+  canRefresh: boolean;
+  hasCartScope: boolean;
+  scopes: string[];
+  /** exact value that must be registered in the Kroger developer application */
+  redirectUri: string;
+  redirectUriValid: boolean;
+  redirectUriError: string | null;
+  redirectUriManagedByAddonOptions: boolean;
+  /** host port the callback listener is reachable on */
+  callbackPort: number;
+  /** false when the client ID/secret are still missing */
+  credentialsReady: boolean;
+  message: string;
+};
+
+export const CART_MODALITY_VALUES = ["PICKUP", "DELIVERY"] as const;
+export type KrogerCartModality = (typeof CART_MODALITY_VALUES)[number];
+
+/**
+ * "matched"    — one candidate clearly corresponds to the grocery line
+ * "ambiguous"  — several plausible candidates; the user must pick
+ * "unmatched"  — Kroger returned nothing usable
+ * "skipped"    — the user excluded this line
+ */
+export type KrogerMatchStatus = "matched" | "ambiguous" | "unmatched" | "skipped";
+
+export type KrogerReviewItem = {
+  /** grocery line key this row came from */
+  key: string;
+  name: string;
+  /** the amount the grocery list asked for, e.g. "3 lb" */
+  requestedDisplay: string;
+  status: KrogerMatchStatus;
+  candidates: KrogerProduct[];
+  selectedUpc: string | null;
+  quantity: number;
+  modality: KrogerCartModality;
+  availableModalities: KrogerCartModality[];
+  /** recorded as a checkout reminder; the public Cart API cannot carry it */
+  allowSubstitutes: boolean;
+  /** true when the chosen product reported no price */
+  priceUnknown: boolean;
+};
+
+export type KrogerReview = {
+  id: string;
+  weekStart: string;
+  locationId: string | null;
+  locationName: string | null;
+  expiresAt: number;
+  items: KrogerReviewItem[];
+  /** lines Kroger could not be asked about, with the reason */
+  notices: string[];
+  disclaimer: string;
+  /** items with a chosen product and a resolvable UPC */
+  readyCount: number;
+  /** items still needing a decision — blocks confirmation */
+  needsAttentionCount: number;
+  /** sum of selected prices × quantity, in cents; an estimate, never a quote */
+  estimatedSubtotalCents: number;
+  /** true when at least one selected product returned no price */
+  estimateIncomplete: boolean;
+};
+
+export type KrogerCartItemResult = {
+  key: string;
+  name: string;
+  upc: string;
+  quantity: number;
+  modality: KrogerCartModality;
+  ok: boolean;
+  error?: string;
+};
+
+export type KrogerCartResult = {
+  addedCount: number;
+  failedCount: number;
+  results: KrogerCartItemResult[];
+  /** names the user asked to keep un-substituted, to set at Kroger checkout */
+  noSubstitutionReminders: string[];
+  authExpired: boolean;
+  cartUrl: string;
 };
