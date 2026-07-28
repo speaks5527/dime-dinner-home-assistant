@@ -1,0 +1,6 @@
+# Place this file at the ROOT of a git repository, with the add-on folder
+# (this project) beside it as `dime_dinner/`. Then add the repository URL in
+# Home Assistant: Settings > Add-ons > Add-on Store > ⋮ > Repositories.
+name: Dime Dinner Add-ons
+url: https://github.com/dime-dinner/dime-dinner
+maintainer: Dime Dinner <noreply@example.com>
