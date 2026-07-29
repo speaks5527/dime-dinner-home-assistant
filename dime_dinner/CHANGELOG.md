@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.3.0
+
+**Two-way compatibility with ReciMe.** A compatibility bridge, not an official ReciMe integration:
+Dime Dinner is independent and unaffiliated, nothing syncs automatically, and no ReciMe account is
+used or asked for.
+
+### ReciMe into Dime Dinner
+
+- Public **ReciMe share links** are accepted by the existing URL importer, which recognises
+  `recime.app`, `recime.io` and `recimeapp.com` (and their subdomains) without being fooled by a
+  lookalike host. Standard schema.org Recipe data is read first; where a share page publishes none,
+  a ReciMe-shaped fallback reads the page's own embedded state, and failing that its rendered
+  Ingredients/Method headings. Title, image, author, servings, prep/cook/total time, ingredients and
+  instructions are taken only when genuinely present — nothing is invented.
+- A link that is **not a public share** is refused and said so: a sign-in wall, a private or revoked
+  link, and a deleted one each get their own message. No login is attempted and no paywall is worked
+  around. A ReciMe link is never answered with a demo recipe.
+- **PDFs exported from ReciMe** are recognised on sight, from the document metadata or, when a
+  print-to-PDF step stripped it, from the export's own footer. A recognised export is read as one
+  recipe however many pages it runs to, instead of one recipe per page, and goes through the same
+  local text extraction and Tesseract OCR review flow as any other PDF.
+- New **Importing from ReciMe** help panel on the Recipes page, and a note in the PDF import dialog.
+
+### Dime Dinner into ReciMe
+
+- New **Send to ReciMe** menu on the recipe and cooking screens, with three ways out:
+  - **Copy for ReciMe** — plain text in the layout ReciMe reads back correctly: title, servings,
+    times, one ingredient per line under `Ingredients`, one numbered instruction per line under
+    `Instructions`, notes, and the original source. Deterministic to the byte.
+  - **Export PDF for ReciMe** — a clean single-recipe PDF, generated entirely inside the add-on,
+    with document title/author metadata marking it as a user export from this app and a clickable
+    link back to the original source.
+  - **Share to ReciMe** — the native share sheet with the PDF attached, so an iOS user can pick
+    ReciMe directly. Capability is measured with `navigator.canShare({ files })` rather than
+    assumed, and every environment that cannot share falls back to copy-the-text plus download.
+- One recipe per export, always. There is no way to bundle several into one file.
+- Source URLs are sanitised before they leave: session and token parameters are stripped, and a
+  Home Assistant ingress URL, a private-network address or a link carrying credentials is dropped
+  entirely rather than published. Nothing about the plan, the grocery list, the pantry or the
+  Kroger connection appears in an export.
+
 ## 1.2.0
 
 **Import recipes from a PDF or ebook, including scanned ones.** The existing single-page URL

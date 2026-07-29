@@ -334,7 +334,7 @@ function parseNutrition(value: unknown): Record<string, string> | null {
   return Object.keys(out).length ? out : null;
 }
 
-function metaContent(html: string, property: string): string | null {
+export function metaContent(html: string, property: string): string | null {
   const re = new RegExp(
     `<meta[^>]+(?:property|name)\\s*=\\s*["']${property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>`,
     "i",

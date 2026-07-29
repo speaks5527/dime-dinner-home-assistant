@@ -3,6 +3,7 @@ import { Link, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Eye, EyeOff, Lightbulb, LightbulbOff, X } from "lucide-react";
 import { RecipeImage } from "@/components/RecipeBits";
+import { RecimeExportMenu } from "@/components/RecimeExportMenu";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -122,6 +123,9 @@ export default function CookPage() {
           </h1>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <div className="hidden sm:block">
+            <RecimeExportMenu recipe={recipe} />
+          </div>
           <Button
             variant="ghost"
             size="sm"

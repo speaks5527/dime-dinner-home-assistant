@@ -35,6 +35,8 @@ import { buildIcs, type CalendarEvent } from "./lib/ics";
 import { sanitizeText } from "./lib/recipeParser";
 import { cancelJob, getJob, getThumbnail, startImport } from "./lib/importJobs";
 import { MAX_PDF_BYTES, PdfToolError, sanitizeFilename, toolStatus } from "./lib/pdfTools";
+import { buildRecimePdf, fetchCoverJpeg } from "./lib/recimePdf";
+import { recimeFilename } from "@shared/recime";
 import {
   DAY_NAMES,
   MEALS,
@@ -234,6 +236,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true });
   });
 
+  /**
+   * One recipe as one printable PDF, laid out for a ReciMe import.
+   *
+   * Built here rather than in the browser so the link annotation and the
+   * document metadata can be written properly, and generated entirely inside
+   * the add-on — the only outbound request is for the recipe's own photo,
+   * which goes through the same SSRF guard as everything else and is skipped
+   * rather than retried if it fails. Nothing about the plan, the grocery list
+   * or this install goes into the file.
+   */
+  app.get("/api/recipes/:id/recime.pdf", async (req, res) => {
+    try {
+      const recipe = storage.getRecipe(Number(req.params.id));
+      if (!recipe) return res.status(404).json({ message: "Recipe not found." });
+
+      const image = req.query.image === "0" ? null : await fetchCoverJpeg(recipe.imageUrl);
+      const pdf = buildRecimePdf(recipe, { image });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${recimeFilename(recipe.title)}"`);
+      res.setHeader("Content-Length", String(pdf.length));
+      res.setHeader("Cache-Control", "no-store");
+      res.end(pdf);
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
   /* -------------------------------- search ------------------------------- */
 
   app.get("/api/search", async (req, res) => {
@@ -405,10 +435,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         // The source is the book, not a page that can be re-fetched. A stable
         // per-page key keeps re-importing the same recipe an update rather than
-        // a duplicate, and keeps the attribution attached to the recipe.
-        const sourceUrl = job.sourceUrl
-          ? `${job.sourceUrl}#page=${candidate.pages[0]}`
-          : `dime-dinner:ebook/${encodeURIComponent(job.filename)}#page=${candidate.pages[0]}`;
+        // a duplicate, and keeps the attribution attached to the recipe. A
+        // ReciMe export is one recipe, so it is keyed by the whole document —
+        // by the share link it printed when it printed one.
+        const sourceUrl = job.recime
+          ? (job.sourceUrl ?? `dime-dinner:recime/${encodeURIComponent(job.filename)}`)
+          : job.sourceUrl
+            ? `${job.sourceUrl}#page=${candidate.pages[0]}`
+            : `dime-dinner:ebook/${encodeURIComponent(job.filename)}#page=${candidate.pages[0]}`;
 
         saved.push(
           storage.upsertRecipe({
@@ -428,7 +462,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             ingredients: selection.ingredients.map((line) => sanitizeText(line)).filter(Boolean),
             instructions: instructions.filter((group) => group.steps.length),
             nutrition: candidate.nutrition,
-            siteName: job.title ?? job.filename,
+            siteName: job.recime ? "ReciMe" : (job.title ?? job.filename),
           }),
         );
       }

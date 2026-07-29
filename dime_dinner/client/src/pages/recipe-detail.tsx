@@ -4,6 +4,7 @@ import { ArrowLeft, CalendarPlus, ChefHat, ExternalLink, Heart } from "lucide-re
 import { Layout } from "@/components/Layout";
 import { RecipeImage, RecipeMeta, SourceNote } from "@/components/RecipeBits";
 import { AddToPlanDialog } from "@/components/AddToPlanDialog";
+import { RecimeExportMenu } from "@/components/RecimeExportMenu";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -94,6 +95,7 @@ export default function RecipeDetailPage() {
               <Heart className={`mr-2 h-4 w-4 ${recipe.favorite ? "fill-primary text-primary" : ""}`} />
               {recipe.favorite ? "Favorited" : "Favorite"}
             </Button>
+            <RecimeExportMenu recipe={recipe} />
             <a href={recipe.sourceUrl} target="_blank" rel="noopener noreferrer nofollow">
               <Button variant="ghost" data-testid="button-open-source">
                 <ExternalLink className="mr-2 h-4 w-4" /> Original

@@ -370,6 +370,10 @@ function StartScreen({
           outside service. The PDF itself is deleted as soon as it has been read; only the recipes you pick are saved,
           for your own personal use.
         </p>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          A recipe exported from <span className="font-medium">ReciMe</span> is recognised on sight and read as a single
+          recipe, however many pages it runs to.
+        </p>
       </div>
     </div>
   );
@@ -430,6 +434,11 @@ function ReviewScreen({
         <p className="text-sm font-medium">
           {job.candidates.length} recipe{job.candidates.length === 1 ? "" : "s"} found in {job.title ?? job.filename}
         </p>
+        {job.recime && (
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground" data-testid="text-recime-detected">
+            This looks like a recipe exported from ReciMe, so the whole document was read as one recipe.
+          </p>
+        )}
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {job.author ? `${job.author} · ` : ""}
           {job.pageCount} pages

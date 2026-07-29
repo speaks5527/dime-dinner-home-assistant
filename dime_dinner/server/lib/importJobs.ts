@@ -15,7 +15,8 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { detectRecipes, type RecipeCandidate } from "./ebookParser";
+import { buildDocumentCandidate, detectRecipes, type RecipeCandidate } from "./ebookParser";
+import { looksLikeRecimePdf, recimeFooterUrl } from "./recime";
 import { downloadPdf, resolvePdfSource, type ResolvedPdfSource } from "./pdfSource";
 import {
   createJobDir,
@@ -24,6 +25,7 @@ import {
   ocrImage,
   PdfToolError,
   readPdfMeta,
+  type PdfMeta,
   removeJobDir,
   renderPage,
   renderThumbnail,
@@ -72,6 +74,8 @@ export type ImportJobStatus = {
   pageCount: number | null;
   /** True when the text layer was unusable and pages had to be recognised. */
   usedOcr: boolean;
+  /** True when the PDF was recognised as a single-recipe export from ReciMe. */
+  recime: boolean;
   candidates: RecipeCandidate[];
   skippedPages: number[];
   warnings: string[];
@@ -180,6 +184,7 @@ export function startImport(input: StartInput): ImportJobStatus {
     author: null,
     pageCount: null,
     usedOcr: false,
+    recime: false,
     candidates: [],
     skippedPages: [],
     warnings: [],
@@ -216,7 +221,7 @@ async function runJob(job: Job, input: StartInput): Promise<void> {
     throwIfCancelled(job);
 
     advance(job, "detecting", "Looking for recipes…", 92);
-    const { candidates, skippedPages } = detectRecipes(pageTexts, job.id.slice(0, 6));
+    const { candidates, skippedPages } = detect(job, pageTexts);
     job.candidates = candidates;
     job.skippedPages = skippedPages;
 
@@ -254,6 +259,21 @@ async function runJob(job: Job, input: StartInput): Promise<void> {
     if (job.dir) await removeJobDir(job.dir);
     job.dir = "";
   }
+}
+
+/**
+ * A ReciMe export holds one recipe however many pages it runs to, so it is
+ * read as a single document. Everything else — a cookbook, an ebook — is read
+ * page by page as before. If the ReciMe layout turns out not to parse, the
+ * generic detector still gets its turn rather than the import failing.
+ */
+function detect(job: Job, pageTexts: string[]): { candidates: RecipeCandidate[]; skippedPages: number[] } {
+  const prefix = job.id.slice(0, 6);
+  if (job.recime) {
+    const candidate = buildDocumentCandidate(pageTexts, `${prefix}-1`);
+    if (candidate) return { candidates: [candidate], skippedPages: [] };
+  }
+  return detectRecipes(pageTexts, prefix);
 }
 
 function throwIfCancelled(job: Job): void {
@@ -301,6 +321,7 @@ async function readPages(job: Job, pdfPath: string): Promise<string[]> {
 
   const textPages = await extractTextPages(pdfPath, meta.pages, job.controller.signal);
   if (!textLayerIsSparse(textPages)) {
+    noteRecime(job, meta, textPages);
     advance(job, "extracting", `Read text from all ${meta.pages} pages.`, 88);
     return textPages;
   }
@@ -318,7 +339,18 @@ async function readPages(job: Job, pdfPath: string): Promise<string[]> {
     "The pages of this PDF are images, so the text was recognised with OCR. Check each recipe before importing — OCR makes mistakes.",
   );
   advance(job, "ocr", `No text layer — recognising page 1 of ${meta.pages}…`, 36);
-  return await ocrAllPages(job, pdfPath, meta.pages);
+  const ocrPages = await ocrAllPages(job, pdfPath, meta.pages);
+  // A ReciMe export that has been printed or scanned still says so on the page,
+  // so the check is worth repeating once OCR has given us something to read.
+  noteRecime(job, meta, ocrPages);
+  return ocrPages;
+}
+
+/** Record that this PDF came from ReciMe, and keep the link it printed. */
+function noteRecime(job: Job, meta: PdfMeta, pageTexts: string[]): void {
+  if (!looksLikeRecimePdf(meta, pageTexts)) return;
+  job.recime = true;
+  job.sourceUrl = recimeFooterUrl(pageTexts) ?? job.sourceUrl;
 }
 
 async function ocrAllPages(job: Job, pdfPath: string, pages: number): Promise<string[]> {

@@ -219,7 +219,15 @@ export function sanitizeFilename(raw: string, fallback = "document.pdf"): string
 
 /* --------------------------------- reading -------------------------------- */
 
-export type PdfMeta = { pages: number; title: string | null; author: string | null };
+export type PdfMeta = {
+  pages: number;
+  title: string | null;
+  author: string | null;
+  /** The app that laid the PDF out, and the library that wrote it. Used to
+   *  recognise an export from a known recipe app. */
+  creator: string | null;
+  producer: string | null;
+};
 
 /** `pdfinfo`, mapped onto the specific failures worth telling the user about. */
 export async function readPdfMeta(file: string, signal?: AbortSignal): Promise<PdfMeta> {
@@ -250,7 +258,13 @@ export async function readPdfMeta(file: string, signal?: AbortSignal): Promise<P
     const value = text.match(new RegExp(`^${name}:\\s*(.+)$`, "im"))?.[1]?.trim();
     return value ? value.slice(0, 200) : null;
   };
-  return { pages, title: field("Title"), author: field("Author") };
+  return {
+    pages,
+    title: field("Title"),
+    author: field("Author"),
+    creator: field("Creator"),
+    producer: field("Producer"),
+  };
 }
 
 /** Embedded text layer, one entry per page. Empty strings for image-only pages. */

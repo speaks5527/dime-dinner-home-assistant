@@ -402,6 +402,8 @@ export type EbookImportJob = {
   pageCount: number | null;
   /** true when the pages were images and had to be recognised */
   usedOcr: boolean;
+  /** true when the PDF was recognised as a single-recipe export from ReciMe */
+  recime: boolean;
   candidates: EbookRecipeCandidate[];
   skippedPages: number[];
   warnings: string[];

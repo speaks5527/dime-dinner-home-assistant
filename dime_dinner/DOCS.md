@@ -7,6 +7,9 @@ left sidebar (via add-on ingress) and does not create any entities, services or 
   a link from any public recipe site that publishes schema.org Recipe data.
 - **PDF and ebook import** — read a whole cookbook, pick the recipes you want. Scanned or
   image-only PDFs are recognised on-device with Tesseract; no cloud OCR and no accounts.
+- **ReciMe compatibility** — import a public ReciMe share link or a ReciMe-exported PDF, and send
+  any recipe back out as text, as a PDF or through the native share sheet. A bridge, not a live
+  sync: no ReciMe account is used.
 - **Cooking Mode** — one big step at a time, hero image, progress bar, expandable ingredient
   list, keyboard shortcuts and an optional keep-screen-awake toggle.
 - **Weekly planner** — seven days, lunch and dinner slots.
@@ -259,6 +262,63 @@ for your own use.
 
 ---
 
+## ReciMe
+
+ReciMe publishes no sync or account API, so Dime Dinner never signs in to ReciMe, never asks for
+ReciMe credentials, and nothing syncs automatically. What exists is a **compatibility bridge**: the
+two apps can hand recipes to each other through the routes ReciMe already supports — a public share
+link, an exported PDF, pasted text and a shared file. Dime Dinner is independent and not affiliated
+with, endorsed by or sponsored by ReciMe.
+
+### Bringing a recipe in from ReciMe
+
+**A public share link.** In ReciMe, open the recipe, tap Share, copy the link, and paste it into the
+import box on the Recipes page. The link must be a public share — a private recipe has to be shared
+in ReciMe first, because Dime Dinner will not sign in on your behalf. A sign-in wall, a revoked link
+and a deleted one are each reported as what they are rather than half-imported.
+
+Share pages that publish schema.org Recipe data are read by the ordinary importer. For those that
+publish none, a ReciMe-specific fallback reads the page's own embedded state, and failing that its
+rendered Ingredients and Method sections. Only fields the page actually contains are taken, and the
+share link is kept as the recipe's source.
+
+**An exported PDF.** On the platforms where ReciMe offers it, export the recipe as a PDF and bring
+it in with **Import PDF or ebook**. A ReciMe export is recognised from its metadata, or from its
+footer when a print-to-PDF step stripped the metadata, and is read as **one** recipe however many
+pages it runs to. It goes through the same local extraction and Tesseract OCR review flow as any
+other PDF, so check the text before saving.
+
+### Sending a recipe out to ReciMe
+
+The **Send to ReciMe** menu on a recipe (and in Cooking Mode) offers three routes. Every one of them
+sends exactly one recipe; there is no way to bundle several into a single file, because ReciMe would
+read that as one long garbled recipe.
+
+| Route                     | What it does                                                              | Use it in ReciMe with     |
+| ------------------------- | ------------------------------------------------------------------------- | ------------------------- |
+| **Copy for ReciMe**       | Plain text: title, servings, times, one ingredient per line, one numbered instruction per line, notes, source | Add recipe → Paste text   |
+| **Export PDF for ReciMe** | A single-recipe PDF built inside the add-on, with a clickable source link  | Add recipe → Import file  |
+| **Share to ReciMe**       | The native share sheet with the PDF attached                              | Pick ReciMe from the sheet |
+
+**Share to ReciMe** only appears where the browser has a share sheet. Whether a *file* can be shared
+is measured with `navigator.canShare({ files })` rather than assumed, because some Home Assistant
+WebViews expose sharing but refuse files. Where the file cannot go, the text is shared instead;
+where nothing can be shared, the text is copied and the PDF downloads, with a toast saying so. On
+iOS in the Home Assistant app the share sheet is the only way to get a file into ReciMe directly.
+
+### What never leaves
+
+Source URLs are sanitised before export. Session, token and signature parameters are stripped, and
+a URL is dropped entirely — rather than published — if it is a Home Assistant ingress link, points
+at a private, loopback, link-local or CGNAT address, carries credentials, or is not `http(s)`.
+
+An export contains the recipe and nothing else: no plan, no grocery list, no pantry, no Kroger
+connection, no settings and no information about this install. The PDF is generated locally; the
+only outbound request it can make is for the recipe's own photo, through the same SSRF guard as
+every other fetch, and it is skipped rather than retried if it fails.
+
+---
+
 ## Skylight exports
 
 Skylight has no documented public API for pushing lists or calendars, so Dime Dinner never signs in
@@ -340,6 +400,13 @@ No test contacts Kroger or any other network host; `fetch` is stubbed throughout
 - Recipe detection relies on a book laying its recipes out conventionally (a heading, an ingredients
   list, then a method). Free-form or heavily columnar layouts may be missed or split oddly.
 - An ebook import job and its page previews expire after 30 minutes; reopening starts a fresh read.
+- ReciMe is a one-recipe-at-a-time bridge in both directions. Nothing syncs, no ReciMe account is
+  used, and a ReciMe link that is not publicly shared cannot be imported — share it in ReciMe first.
+- A ReciMe share page is read as it is published today; if ReciMe changes how its pages are built,
+  the fallback parser may stop finding a recipe until it is updated. Exporting from ReciMe as a PDF
+  is the route that does not depend on that.
+- **Share to ReciMe** depends on the browser. Where there is no share sheet, or where it refuses
+  files, Dime Dinner falls back to copying the text and downloading the PDF.
 - Pantry deduction never converts between weight and volume, so those lines are flagged rather than
   reduced.
 - Kroger data is informational, not a live inventory feed.

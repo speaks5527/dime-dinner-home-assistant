@@ -21,11 +21,19 @@ export const MAX_REDIRECTS = 3;
 export const TIMEOUT_MS = 12_000;
 
 export class FetchRejected extends Error {
+  /** What this add-on answers its own client with. */
   status: number;
-  constructor(message: string, status = 400) {
+  /**
+   * What the remote site actually said, when the failure came from a response
+   * rather than from the guard. Most callers only need `status`, but one that
+   * wants to explain a 403 differently from a 500 cannot recover it otherwise.
+   */
+  upstreamStatus?: number;
+  constructor(message: string, status = 400, upstreamStatus?: number) {
     super(message);
     this.name = "FetchRejected";
     this.status = status;
+    this.upstreamStatus = upstreamStatus;
   }
 }
 
@@ -185,7 +193,11 @@ export async function safeRequest(
     }
 
     if (!response.ok) {
-      throw new FetchRejected(`The site responded with HTTP ${response.status}.`, response.status === 404 ? 404 : 502);
+      throw new FetchRejected(
+        `The site responded with HTTP ${response.status}.`,
+        response.status === 404 ? 404 : 502,
+        response.status,
+      );
     }
     return { response, url: current.toString() };
   }

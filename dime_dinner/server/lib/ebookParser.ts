@@ -230,6 +230,28 @@ function readMeta(metaLines: string[]): { servings: string | null; totalMinutes:
   return { servings, totalMinutes };
 }
 
+/**
+ * Meta written as labels rather than as a cookbook's decorated header line —
+ * `Servings: 4`, `Serves 4`, `Total time: 40 minutes`. This is how a recipe app
+ * lays out its export, so it is only consulted for a whole-document read; a
+ * printed cookbook's `| 4 servings © 30 minutes` still goes through `readMeta`.
+ */
+function readLabelledMeta(lines: string[]): { servings: string | null; totalMinutes: number | null } {
+  const joined = lines.join(" · ");
+  const servings = joined.match(/(?:servings?|yield|serves)\s*:?\s*([^·|©]{1,40})/i);
+  const time = joined.match(/total\s*time\s*:?\s*([^·|©]{1,40})/i);
+
+  let totalMinutes: number | null = null;
+  if (time) {
+    const hours = Number(time[1].match(/(\d+)\s*(?:hours?|hrs?)/i)?.[1] ?? 0);
+    const mins = Number(time[1].match(/(\d+)\s*(?:minutes?|mins?)/i)?.[1] ?? 0);
+    const bare = hours || mins ? 0 : Number(time[1].match(/^\s*(\d+)\s*$/)?.[1] ?? 0);
+    const value = hours * 60 + mins + bare;
+    if (value > 0 && value < 6000) totalMinutes = value;
+  }
+  return { servings: servings ? sanitizeText(servings[1]) || null : null, totalMinutes };
+}
+
 function readNutrition(lines: string[]): Record<string, string> | null {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
@@ -330,6 +352,72 @@ function buildCandidate(pageText: string, page: number, id: string): RecipeCandi
     id,
     title,
     pages: [page],
+    ingredients,
+    instructions,
+    description: readDescription(lines, inlineMetaIndex),
+    notes: readNotes(lines),
+    servings,
+    totalMinutes,
+    nutrition: readNutrition(lines),
+    confidence,
+    warnings,
+  };
+}
+
+/**
+ * The recipe name in a layout that prints it at the top, above the ingredient
+ * list, rather than beside the method. Everything a header can hold instead —
+ * an app's own name, a serving strip, a URL — is skipped, and a page whose top
+ * is nothing but that boilerplate yields null rather than a wrong title.
+ */
+function findLeadTitle(lines: string[], beforeIndex: number): string | null {
+  for (let i = 0; i < beforeIndex; i += 1) {
+    const line = lines[i];
+    if (!line || line.length < 3 || line.length > 120) continue;
+    if (isHeading(line) || looksLikeNutrition(line) || STEP_START.test(line)) continue;
+    if (META_MARKER.test(line) || QUANTITY_START.test(line)) continue;
+    if (/^https?:\/\/|^www\./i.test(line)) continue;
+    if (/^(?:recime|servings?|serves|yield|prep|cook|total|difficulty|by)\b/i.test(line)) continue;
+    if (!/[A-Za-z]{3}/.test(line)) continue;
+    return line;
+  }
+  return null;
+}
+
+/**
+ * One recipe read from a whole document rather than page by page.
+ *
+ * A recipe app exports a single recipe, and its method routinely runs over a
+ * page break. Detecting per page would cut that into two half-recipes — an
+ * ingredient list with no method, and a method with no ingredients — so the
+ * pages are joined first and the title is taken from the top of the document.
+ */
+export function buildDocumentCandidate(pageTexts: string[], id: string): RecipeCandidate | null {
+  const text = pageTexts.join("\n");
+  const { lines, metaLines } = prepare(text);
+  const ingredientsAt = lines.findIndex((line) => INGREDIENTS_HEADING.test(line));
+  const instructionsAt = lines.findIndex((line, i) => i > ingredientsAt && INSTRUCTIONS_HEADING.test(line));
+  if (ingredientsAt < 0 || instructionsAt < 0) return null;
+
+  const ingredients = collectIngredients(lines, ingredientsAt + 1, instructionsAt);
+  const instructions = collectSteps(lines, instructionsAt + 1, lines.length);
+  const stepCount = instructions.reduce((sum, group) => sum + group.steps.length, 0);
+  if (!ingredients.length || !stepCount) return null;
+
+  const title = findLeadTitle(lines, ingredientsAt);
+  const inlineMetaIndex = lines.findIndex((line) => META_MARKER.test(line));
+  const head = lines.slice(0, ingredientsAt);
+  const decorated = readMeta([...metaLines, ...head.filter((line) => META_MARKER.test(line) || SERVINGS_RE.test(line))]);
+  const labelled = readLabelledMeta(head);
+  const servings = decorated.servings ?? labelled.servings;
+  const totalMinutes = decorated.totalMinutes ?? labelled.totalMinutes;
+
+  const { confidence, warnings } = score({ hasBothHeadings: true, ingredients, steps: stepCount, title });
+
+  return {
+    id,
+    title,
+    pages: pageTexts.map((_, index) => index + 1),
     ingredients,
     instructions,
     description: readDescription(lines, inlineMetaIndex),

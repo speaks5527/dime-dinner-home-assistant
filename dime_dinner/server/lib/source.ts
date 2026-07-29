@@ -4,11 +4,13 @@
  *  - Browse/search is backed by Eating on a Dime's public WordPress REST API
  *    (one request per user action, cached, rate limited — never a crawl).
  *  - Import accepts ANY public http(s) recipe URL and reads standards-based
- *    schema.org/Recipe JSON-LD from it.
+ *    schema.org/Recipe JSON-LD from it, with a ReciMe-shaped fallback for
+ *    public ReciMe share links, which do not publish JSON-LD.
  */
 import { TtlCache, politeGate, RateLimited } from "./cache";
 import { FetchRejected, safeFetch, validateUrlShape } from "./safeFetch";
 import { parseRecipeFromHtml, sanitizeText, type ParsedRecipe } from "./recipeParser";
+import { isRecimeUrl, parseRecimeSharePage, recimeAccessProblem } from "./recime";
 import { DEMO_RECIPES, demoBySlug, demoSearch, type DemoRecipe } from "./demoData";
 import type { SearchHit } from "@shared/schema";
 
@@ -118,6 +120,21 @@ function demoImport(url: string): ImportResult | null {
 }
 
 /**
+ * Read a page as a recipe: the schema.org standard first, then the ReciMe
+ * fallback for ReciMe's own share pages, which render client-side and publish
+ * no JSON-LD.
+ */
+function parsePage(html: string, canonical: string, recime: boolean): ParsedRecipe | null {
+  if (recime) {
+    // Checked before parsing, and on the cached copy as well as a fresh one, so
+    // a sign-in prompt can never be read as a recipe however it was obtained.
+    const problem = recimeAccessProblem(200, html);
+    if (problem) throw new FetchRejected(problem, 403);
+  }
+  return parseRecipeFromHtml(html, canonical) ?? (recime ? parseRecimeSharePage(html, canonical) : null);
+}
+
+/**
  * Import one recipe from any public recipe URL.
  * Throws FetchRejected for unsafe or unusable URLs.
  */
@@ -125,10 +142,11 @@ export async function importFromUrl(rawUrl: string): Promise<ImportResult> {
   const url = validateUrlShape(rawUrl);
   const host = url.hostname.toLowerCase();
   const canonical = url.toString();
+  const recime = isRecimeUrl(url);
 
   const cachedHtml = pageCache.get(canonical);
   if (cachedHtml) {
-    const parsed = parseRecipeFromHtml(cachedHtml, canonical);
+    const parsed = parsePage(cachedHtml, canonical, recime);
     if (parsed) return { recipe: parsed, sourceUrl: canonical, source: "live" };
   }
 
@@ -142,16 +160,27 @@ export async function importFromUrl(rawUrl: string): Promise<ImportResult> {
     html = res.body;
     pageCache.set(canonical, html);
   } catch (err) {
-    const demo = demoImport(canonical);
-    if (demo) return demo;
+    // A ReciMe link is never satisfied with an Eating on a Dime demo recipe,
+    // and a refusal from ReciMe is worth explaining in ReciMe's own terms.
+    if (recime && err instanceof FetchRejected) {
+      const status = err.upstreamStatus ?? err.status;
+      const problem = recimeAccessProblem(status, "");
+      throw problem ? new FetchRejected(problem, status === 403 ? 403 : err.status) : err;
+    }
+    if (!recime) {
+      const demo = demoImport(canonical);
+      if (demo) return demo;
+    }
     if (err instanceof FetchRejected || err instanceof RateLimited) throw err;
     throw new FetchRejected(`Could not load that page: ${(err as Error).message}`, 502);
   }
 
-  const parsed = parseRecipeFromHtml(html, canonical);
+  const parsed = parsePage(html, canonical, recime);
   if (!parsed) {
     throw new FetchRejected(
-      "No structured recipe data (schema.org Recipe) was found on that page. Most major recipe sites publish it — try the printable or main recipe page URL.",
+      recime
+        ? "That ReciMe page did not contain a readable recipe. Make sure the link is a shared recipe rather than a collection or profile page, or export the recipe from ReciMe as a PDF and import that instead."
+        : "No structured recipe data (schema.org Recipe) was found on that page. Most major recipe sites publish it — try the printable or main recipe page URL.",
       422,
     );
   }

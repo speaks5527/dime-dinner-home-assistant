@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { BookOpen, Download, Heart, Loader2, Search, Trash2, Link2 } from "lucide-react";
 import { Layout, PageHeader } from "@/components/Layout";
 import { EbookImportDialog } from "@/components/EbookImportDialog";
+import { RecimeHelp } from "@/components/RecimeHelp";
 import { RecipeImage, RecipeMeta } from "@/components/RecipeBits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -146,8 +147,11 @@ export default function RecipesPage() {
         </form>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
           Works with any public recipe page that publishes schema.org Recipe data — that includes Eating on a Dime and
-          most major recipe sites. Pages behind logins, paywalls or private networks are not fetched.
+          most major recipe sites, plus public <span className="font-medium">ReciMe</span> share links. Pages behind
+          logins, paywalls or private networks are not fetched.
         </p>
+
+        <RecimeHelp />
 
         <Separator className="my-4" />
 

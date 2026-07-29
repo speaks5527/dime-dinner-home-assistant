@@ -10,6 +10,11 @@ Recipes can be browsed from Eating on a Dime, imported from any public recipe pa
 PDF cookbook — including scanned, image-only ones, which are recognised on your own hardware with
 Tesseract. No cloud OCR and no accounts.
 
+Recipes also move both ways with **ReciMe**: import a public ReciMe share link or a ReciMe-exported
+PDF, and send any recipe back out as formatted text, as a single-recipe PDF, or through your
+device's share sheet. This is a compatibility bridge, not an official ReciMe integration — nothing
+syncs automatically and no ReciMe account is used.
+
 The panel itself is reached through the Home Assistant sidebar. One port, `8099/tcp`, is published,
 and only to receive the Kroger sign-in callback if you choose to connect a Kroger account — it serves
 that single path and nothing else.
@@ -33,8 +38,8 @@ that single path and nothing else.
 ## Documentation
 
 See [`dime_dinner/DOCS.md`](./dime_dinner/DOCS.md) for configuration options, importing a PDF or
-ebook, Kroger product lookups, sending the grocery list to a Kroger cart, export formats and
-development instructions.
+ebook, moving recipes to and from ReciMe, Kroger product lookups, sending the grocery list to a
+Kroger cart, export formats and development instructions.
 [`dime_dinner/CHANGELOG.md`](./dime_dinner/CHANGELOG.md) lists what changed in each version.
 
 MIT licensed.
