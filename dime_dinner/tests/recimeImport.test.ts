@@ -343,6 +343,79 @@ describe("reading a ReciMe export as one recipe", () => {
     expect(Array.isArray(candidate.pages)).toBe(true);
   });
 
+  it("reads the two-page Marry Me Chicken Pasta export without merging its numbered steps", () => {
+    const ingredients = [
+      "1 pound chicken breast",
+      "32 ounces reduced sodium chicken broth",
+      "8 ounces sun dried tomatoes",
+      "Italian seasoning, to taste",
+      "Garlic powder, to taste",
+      "Red pepper flakes, to taste",
+      "Salt, to taste",
+      "Pepper, to taste",
+      "16 ounces heavy whipping cream",
+      "16 ounces favorite pasta, uncooked",
+      "1 cup shredded parmesan",
+    ];
+    const expectedSteps = [
+      "Add the chicken breast to the crock pot.",
+      "Pour in the reduced sodium chicken broth.",
+      "Add the sun dried tomatoes.",
+      "Season with Italian seasoning, garlic powder, red pepper flakes, salt, and pepper.",
+      "Cook on high for about three hours.",
+      "Shred the chicken once it is done.",
+      "Add the heavy whipping cream.",
+      "Add the uncooked pasta.",
+      "Stir in the shredded parmesan cheese.",
+      "Mix well and put the lid back on.",
+      "Cook on high for one more hour.",
+    ];
+    const exportPages = [
+      [
+        "ReciMe",
+        "Marry Me Chicken Pasta",
+        "Servings: 2",
+        "INGREDIENTS (11)",
+        ...ingredients,
+        "INSTRUCTIONS · 11",
+        "1",
+        expectedSteps[0],
+        "2.",
+        expectedSteps[1],
+        "3",
+        expectedSteps[2],
+        "4.",
+        expectedSteps[3],
+        "5",
+        expectedSteps[4],
+        "Made with ReciMe",
+        "Page 1 of 2",
+      ].join("\n"),
+      [
+        "6",
+        expectedSteps[5],
+        "7.",
+        expectedSteps[6],
+        "8",
+        expectedSteps[7],
+        "9.",
+        expectedSteps[8],
+        "10",
+        expectedSteps[9],
+        "11.",
+        expectedSteps[10],
+        "https://recime.app/recipe/marry-me-chicken-pasta",
+        "Page 2 of 2",
+      ].join("\n"),
+    ];
+
+    const candidate = buildDocumentCandidate(exportPages, "marry-me")!;
+    expect(candidate.title).toBe("Marry Me Chicken Pasta");
+    expect(candidate.servings).toBe("2");
+    expect(candidate.ingredients).toEqual(ingredients);
+    expect(candidate.instructions.flatMap((group) => group.steps.map((step) => step.text))).toEqual(expectedSteps);
+  });
+
   it("returns nothing when the document is not one recipe, so the page-by-page detector still gets a turn", () => {
     expect(buildDocumentCandidate(["A menu", "Starters, mains, puddings"], "job-2")).toBeNull();
     expect(buildDocumentCandidate(["Ingredients", "1 onion"], "job-3")).toBeNull();

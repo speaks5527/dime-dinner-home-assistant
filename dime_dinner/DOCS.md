@@ -3,8 +3,9 @@
 A self-contained meal planning panel for Home Assistant. It appears as its own tab in the
 left sidebar (via add-on ingress) and does not create any entities, services or automations.
 
-- **Recipes** — search the [Eating on a Dime](https://www.eatingonadime.com/) catalog, or paste
-  a link from any public recipe site that publishes schema.org Recipe data.
+- **Recipes** — search [Eating on a Dime](https://www.eatingonadime.com/),
+  [AJ Greats](https://ajgreats.com/), and [KetoFocus](https://www.ketofocus.com/), or paste a link
+  from any public recipe site that publishes schema.org Recipe data.
 - **PDF and ebook import** — read a whole cookbook, pick the recipes you want. Scanned or
   image-only PDFs are recognised on-device with Tesseract; no cloud OCR and no accounts.
 - **ReciMe compatibility** — import a public ReciMe share link or a ReciMe-exported PDF, and send
@@ -341,7 +342,8 @@ Recipes are fetched from their publisher **on demand**, only when you search or 
 recipe data the page itself publishes as schema.org JSON-LD. Nothing is bulk-copied, mirrored or
 re-published, requests are rate-limited per host with a descriptive user agent, and every recipe
 keeps a prominent link back to its source. Dime Dinner is an independent personal tool and is not
-affiliated with, endorsed by or sponsored by Eating on a Dime, Kroger or Skylight.
+affiliated with, endorsed by or sponsored by Eating on a Dime, AJ Greats, KetoFocus, Kroger or
+Skylight.
 
 A PDF or ebook is read the same way: on demand, once, locally, and only into the recipes you choose
 to keep. The file itself is deleted as soon as the job ends.
@@ -390,7 +392,8 @@ No test contacts Kroger or any other network host; `fetch` is stubbed throughout
 
 ## Limitations
 
-- Browse/search covers Eating on a Dime only; other sites are supported through URL import.
+- Browse/search covers Eating on a Dime, AJ Greats, and KetoFocus; other sites are supported through
+  URL import.
 - Sites that do not publish schema.org Recipe data cannot be imported.
 - Ebook import reads PDFs. EPUB and other ebook formats are not supported; export to PDF first.
 - OCR is English only, and its accuracy depends on the scan. Review every recognised recipe before

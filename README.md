@@ -6,9 +6,9 @@ A Home Assistant add-on repository containing a single add-on:
 | ------------------------------- | --------------------------------------------------------------------------- |
 | [Dime Dinner](./dime_dinner/)   | Meal planner, recipe box, grocery list and pantry, as a sidebar panel.       |
 
-Recipes can be browsed from Eating on a Dime, imported from any public recipe page, or read out of a
-PDF cookbook — including scanned, image-only ones, which are recognised on your own hardware with
-Tesseract. No cloud OCR and no accounts.
+Recipes can be browsed from Eating on a Dime, AJ Greats, and KetoFocus, imported from any public
+recipe page, or read out of a PDF cookbook — including scanned, image-only ones, which are
+recognised on your own hardware with Tesseract. No cloud OCR and no accounts.
 
 Recipes also move both ways with **ReciMe**: import a public ReciMe share link or a ReciMe-exported
 PDF, and send any recipe back out as formatted text, as a single-recipe PDF, or through your

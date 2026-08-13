@@ -51,6 +51,10 @@ const INSTRUCTIONS_HEADING = new RegExp(
   String.raw`^[\s|]*(?:instructions?|directions?|method|preparation|steps)${HEADING_TAIL}`,
   "i",
 );
+const RECIPE_APP_INGREDIENTS_HEADING =
+  /^[\s|•]*(?:\d{1,3}\s+)?(?:ingredients?|what\s+you(?:'|’)?ll\s+need)(?:\s*(?:\(\s*\d{1,3}\s*\)|\d{1,3}|[|•·—-]\s*.{0,12}))?\s*$/i;
+const RECIPE_APP_INSTRUCTIONS_HEADING =
+  /^[\s|•]*(?:\d{1,3}\s+)?(?:instructions?|directions?|method|preparation|steps)(?:\s*(?:\(\s*\d{1,3}\s*\)|\d{1,3}|[|•·—-]\s*.{0,12}))?\s*$/i;
 const ALTERNATIVE_HEADING = /^[\s|]*(alternative\s+method|variation|to\s+serve|for\s+the\s+\w+)\s*:?\s*$/i;
 const NOTES_HEADING = /^[\s|]*notes?\s*:?\s*$/i;
 
@@ -66,6 +70,7 @@ const NUTRITION_RE =
 
 /** Step numbering that has been through OCR: `1.`, `§.`, `Tl.`, `2)`. */
 const STEP_START = /^\s*(?:\d{1,2}|[A-Za-z§|\]{}]{1,2})\s*[.)]\s*(?=[A-Za-z("'“])/;
+const STANDALONE_STEP_NUMBER = /^\s*\d{1,2}\s*[.)]?\s*$/;
 /** A leading amount, allowing `]`/`|`/`I`/`l` for a misread `1`. */
 const QUANTITY_START =
   /^\s*(?:\d+[\d/.,\s-]*|[½¼¾⅓⅔⅛]|[\]|IlO]\s(?=[a-z])|a\s+(?:pinch|handful|few)\b|salt\b|pepper\b)/i;
@@ -113,10 +118,26 @@ function prepare(pageText: string): PageLines {
 
 function isHeading(line: string): boolean {
   return (
-    INGREDIENTS_HEADING.test(line) ||
-    INSTRUCTIONS_HEADING.test(line) ||
+    isIngredientsHeading(line) ||
+    isInstructionsHeading(line) ||
     ALTERNATIVE_HEADING.test(line) ||
     NOTES_HEADING.test(line)
+  );
+}
+
+function isIngredientsHeading(line: string): boolean {
+  return INGREDIENTS_HEADING.test(line) || RECIPE_APP_INGREDIENTS_HEADING.test(line);
+}
+
+function isInstructionsHeading(line: string): boolean {
+  return INSTRUCTIONS_HEADING.test(line) || RECIPE_APP_INSTRUCTIONS_HEADING.test(line);
+}
+
+function isDocumentChrome(line: string): boolean {
+  return (
+    /^(?:made|created|saved|exported)\s+(?:with|in|from)\s+recime\b/i.test(line) ||
+    /^https?:\/\/(?:[\w-]+\.)?(?:recime\.app|recime\.io|recimeapp\.com)\b/i.test(line) ||
+    /^page\s+\d+(?:\s+of\s+\d+)?$/i.test(line)
   );
 }
 
@@ -152,10 +173,12 @@ function collectIngredients(lines: string[], from: number, to: number): string[]
 function collectSteps(lines: string[], from: number, to: number): InstructionGroup[] {
   const groups: InstructionGroup[] = [{ steps: [] }];
   let current = groups[0];
+  let pendingStepNumber = false;
 
   for (let i = from; i < to; i += 1) {
     const line = lines[i];
     if (!line) continue;
+    if (isDocumentChrome(line)) continue;
     if (NOTES_HEADING.test(line)) break;
     if (ALTERNATIVE_HEADING.test(line)) {
       current = { heading: line.replace(/[\s|]*:?\s*$/, "").trim(), steps: [] };
@@ -166,6 +189,12 @@ function collectSteps(lines: string[], from: number, to: number): InstructionGro
 
     if (STEP_START.test(line)) {
       current.steps.push({ text: line.replace(STEP_START, "").trim() });
+      pendingStepNumber = false;
+    } else if (STANDALONE_STEP_NUMBER.test(line)) {
+      pendingStepNumber = true;
+    } else if (pendingStepNumber) {
+      current.steps.push({ text: line.trim() });
+      pendingStepNumber = false;
     } else if (current.steps.length) {
       const last = current.steps[current.steps.length - 1];
       last.text = `${last.text} ${line}`.replace(/\s+/g, " ").trim();
@@ -330,8 +359,8 @@ function score(candidate: {
 
 function buildCandidate(pageText: string, page: number, id: string): RecipeCandidate | null {
   const { lines, metaLines } = prepare(pageText);
-  const ingredientsAt = lines.findIndex((line) => INGREDIENTS_HEADING.test(line));
-  const instructionsAt = lines.findIndex((line, i) => i > ingredientsAt && INSTRUCTIONS_HEADING.test(line));
+  const ingredientsAt = lines.findIndex((line) => isIngredientsHeading(line));
+  const instructionsAt = lines.findIndex((line, i) => i > ingredientsAt && isInstructionsHeading(line));
   if (ingredientsAt < 0 || instructionsAt < 0) return null;
 
   const ingredients = collectIngredients(lines, ingredientsAt + 1, instructionsAt);
@@ -395,8 +424,8 @@ function findLeadTitle(lines: string[], beforeIndex: number): string | null {
 export function buildDocumentCandidate(pageTexts: string[], id: string): RecipeCandidate | null {
   const text = pageTexts.join("\n");
   const { lines, metaLines } = prepare(text);
-  const ingredientsAt = lines.findIndex((line) => INGREDIENTS_HEADING.test(line));
-  const instructionsAt = lines.findIndex((line, i) => i > ingredientsAt && INSTRUCTIONS_HEADING.test(line));
+  const ingredientsAt = lines.findIndex((line) => isIngredientsHeading(line));
+  const instructionsAt = lines.findIndex((line, i) => i > ingredientsAt && isInstructionsHeading(line));
   if (ingredientsAt < 0 || instructionsAt < 0) return null;
 
   const ingredients = collectIngredients(lines, ingredientsAt + 1, instructionsAt);

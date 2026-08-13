@@ -18,6 +18,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { deleteJson, patchJson, postJson } from "@/lib/app";
 import type { RecipeDTO, SearchResponse } from "@shared/schema";
 
+type BrowseSource = "eatingonadime" | "ajgreats" | "ketofocus";
+
 function SavedCard({ recipe }: { recipe: RecipeDTO }) {
   const { toast } = useToast();
   const favorite = useMutation({
@@ -75,23 +77,118 @@ function SavedCard({ recipe }: { recipe: RecipeDTO }) {
   );
 }
 
-export default function RecipesPage() {
-  const { toast } = useToast();
+function BrowseCatalog({
+  source,
+  label,
+  importPending,
+  onImport,
+}: {
+  source: BrowseSource;
+  label: string;
+  importPending: boolean;
+  onImport: (url: string) => void;
+}) {
   const [term, setTerm] = useState("");
   const [query, setQuery] = useState("");
+  const search = useQuery<SearchResponse>({
+    queryKey: ["/api/search", source, query],
+    queryFn: async () => {
+      const params = new URLSearchParams({ source, q: query });
+      const res = await apiRequest("GET", `/api/search?${params.toString()}`);
+      return (await res.json()) as SearchResponse;
+    },
+  });
+
+  return (
+    <>
+      <form
+        className="mb-5 flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setQuery(term.trim());
+        }}
+      >
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={term}
+            onChange={(event) => setTerm(event.target.value)}
+            placeholder={`Search ${label}…`}
+            className="pl-9"
+            data-testid={`input-search-${source}`}
+          />
+        </div>
+        <Button type="submit" data-testid={`button-search-${source}`}>
+          Search
+        </Button>
+      </form>
+
+      {search.data?.notice && (
+        <div className="mb-4 rounded-md border border-border bg-muted/60 p-3 text-xs text-muted-foreground">
+          {search.data.notice}
+        </div>
+      )}
+
+      {search.isFetching ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-52 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {(search.data?.results ?? []).map((hit) => (
+            <Card key={hit.url} className="flex flex-col overflow-hidden border-card-border" data-testid={`card-hit-${hit.url}`}>
+              <RecipeImage src={hit.imageUrl} alt={hit.title} className="h-36 w-full" />
+              <div className="flex flex-1 flex-col gap-2 p-4">
+                <h3 className="font-display text-sm font-semibold leading-snug">{hit.title}</h3>
+                {hit.excerpt && <p className="line-clamp-3 text-xs text-muted-foreground">{hit.excerpt}</p>}
+                <div className="mt-auto flex items-center gap-2 pt-2">
+                  {hit.savedId ? (
+                    <Link href={`/recipes/${hit.savedId}`}>
+                      <Badge variant="secondary" data-testid={`badge-saved-${hit.savedId}`}>
+                        In your library
+                      </Badge>
+                    </Link>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={importPending}
+                      onClick={() => onImport(hit.url)}
+                      data-testid={`button-import-hit-${source}`}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" /> Save
+                    </Button>
+                  )}
+                  <a
+                    href={hit.url}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                    className="text-xs text-muted-foreground underline underline-offset-2"
+                  >
+                    View source
+                  </a>
+                </div>
+              </div>
+            </Card>
+          ))}
+          {!search.isFetching && (search.data?.results.length ?? 0) === 0 && (
+            <p className="text-sm text-muted-foreground">No recipes matched that search.</p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function RecipesPage() {
+  const { toast } = useToast();
   const [importUrl, setImportUrl] = useState("");
   const [tab, setTab] = useState("library");
   const [ebookOpen, setEbookOpen] = useState(false);
 
   const saved = useQuery<RecipeDTO[]>({ queryKey: ["/api/recipes"] });
-  const search = useQuery<SearchResponse>({
-    queryKey: ["/api/search", query],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/search?q=${encodeURIComponent(query)}`);
-      return (await res.json()) as SearchResponse;
-    },
-    enabled: tab === "browse",
-  });
 
   const importRecipe = useMutation({
     mutationFn: (url: string) => postJson<{ recipe: RecipeDTO; notice?: string }>("/api/import", { url }),
@@ -117,7 +214,7 @@ export default function RecipesPage() {
     <Layout>
       <PageHeader
         title="Recipes"
-        subtitle="Browse Eating on a Dime, or import any recipe page that publishes standard recipe data."
+        subtitle="Browse Eating on a Dime, AJ Greats, and KetoFocus, or import any public recipe page."
       />
 
       {/* Import bar */}
@@ -146,8 +243,8 @@ export default function RecipesPage() {
           </Button>
         </form>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-          Works with any public recipe page that publishes schema.org Recipe data — that includes Eating on a Dime and
-          most major recipe sites, plus public <span className="font-medium">ReciMe</span> share links. Pages behind
+          Works with any public recipe page that publishes schema.org Recipe data — including Eating on a Dime, AJ
+          Greats, KetoFocus, and most major recipe sites, plus public <span className="font-medium">ReciMe</span> share links. Pages behind
           logins, paywalls or private networks are not fetched.
         </p>
 
@@ -176,12 +273,18 @@ export default function RecipesPage() {
       <EbookImportDialog open={ebookOpen} onOpenChange={setEbookOpen} />
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-5">
+        <TabsList className="mb-5 h-auto flex-wrap justify-start">
           <TabsTrigger value="library" data-testid="tab-library">
             My library {recipes.length ? `(${recipes.length})` : ""}
           </TabsTrigger>
-          <TabsTrigger value="browse" data-testid="tab-browse">
-            Browse Eating on a Dime
+          <TabsTrigger value="eatingonadime" data-testid="tab-eatingonadime">
+            Eating on a Dime
+          </TabsTrigger>
+          <TabsTrigger value="ajgreats" data-testid="tab-ajgreats">
+            AJ Greats
+          </TabsTrigger>
+          <TabsTrigger value="ketofocus" data-testid="tab-ketofocus">
+            KetoFocus
           </TabsTrigger>
         </TabsList>
 
@@ -196,9 +299,9 @@ export default function RecipesPage() {
             <div className="surface-weave rounded-lg border border-dashed border-border p-10 text-center">
               <h2 className="font-display text-lg font-semibold">Your recipe box is empty</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                Paste a recipe link above, or switch to Browse to search the Eating on a Dime catalog.
+                Paste a recipe link above, or choose a publisher tab to browse its recipe catalog.
               </p>
-              <Button className="mt-4" onClick={() => setTab("browse")} data-testid="button-empty-browse">
+              <Button className="mt-4" onClick={() => setTab("eatingonadime")} data-testid="button-empty-browse">
                 <Search className="mr-2 h-4 w-4" /> Browse recipes
               </Button>
             </div>
@@ -228,84 +331,29 @@ export default function RecipesPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="browse">
-          <form
-            className="mb-5 flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setQuery(term.trim());
-            }}
-          >
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={term}
-                onChange={(event) => setTerm(event.target.value)}
-                placeholder="Search chicken, casserole, crockpot…"
-                className="pl-9"
-                data-testid="input-search"
-              />
-            </div>
-            <Button type="submit" data-testid="button-search">
-              Search
-            </Button>
-          </form>
-
-          {search.data?.source === "demo" && (
-            <div className="mb-4 rounded-md border border-border bg-muted/60 p-3 text-xs text-muted-foreground">
-              {search.data.notice ?? "Showing the offline demo catalog."}
-            </div>
-          )}
-
-          {search.isFetching ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} className="h-52 w-full rounded-lg" />
-              ))}
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {(search.data?.results ?? []).map((hit) => (
-                <Card key={hit.url} className="flex flex-col overflow-hidden border-card-border" data-testid={`card-hit-${hit.url}`}>
-                  <RecipeImage src={hit.imageUrl} alt={hit.title} className="h-36 w-full" />
-                  <div className="flex flex-1 flex-col gap-2 p-4">
-                    <h3 className="font-display text-sm font-semibold leading-snug">{hit.title}</h3>
-                    {hit.excerpt && <p className="line-clamp-3 text-xs text-muted-foreground">{hit.excerpt}</p>}
-                    <div className="mt-auto flex items-center gap-2 pt-2">
-                      {hit.savedId ? (
-                        <Link href={`/recipes/${hit.savedId}`}>
-                          <Badge variant="secondary" data-testid={`badge-saved-${hit.savedId}`}>
-                            In your library
-                          </Badge>
-                        </Link>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={importRecipe.isPending}
-                          onClick={() => importRecipe.mutate(hit.url)}
-                          data-testid="button-import-hit"
-                        >
-                          <Download className="mr-1.5 h-3.5 w-3.5" /> Save
-                        </Button>
-                      )}
-                      <a
-                        href={hit.url}
-                        target="_blank"
-                        rel="noopener noreferrer nofollow"
-                        className="text-xs text-muted-foreground underline underline-offset-2"
-                      >
-                        View source
-                      </a>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-              {!search.isFetching && (search.data?.results.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground">No recipes matched that search.</p>
-              )}
-            </div>
-          )}
+        <TabsContent value="eatingonadime">
+          <BrowseCatalog
+            source="eatingonadime"
+            label="Eating on a Dime"
+            importPending={importRecipe.isPending}
+            onImport={importRecipe.mutate}
+          />
+        </TabsContent>
+        <TabsContent value="ajgreats">
+          <BrowseCatalog
+            source="ajgreats"
+            label="AJ Greats"
+            importPending={importRecipe.isPending}
+            onImport={importRecipe.mutate}
+          />
+        </TabsContent>
+        <TabsContent value="ketofocus">
+          <BrowseCatalog
+            source="ketofocus"
+            label="KetoFocus"
+            importPending={importRecipe.isPending}
+            onImport={importRecipe.mutate}
+          />
         </TabsContent>
       </Tabs>
     </Layout>

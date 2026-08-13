@@ -1,7 +1,7 @@
 /**
  * Recipe sourcing.
  *
- *  - Browse/search is backed by Eating on a Dime's public WordPress REST API
+ *  - Browse/search is backed by each publisher's public catalog endpoint
  *    (one request per user action, cached, rate limited — never a crawl).
  *  - Import accepts ANY public http(s) recipe URL and reads standards-based
  *    schema.org/Recipe JSON-LD from it, with a ReciMe-shaped fallback for
@@ -14,8 +14,38 @@ import { isRecimeUrl, parseRecimeSharePage, recimeAccessProblem } from "./recime
 import { DEMO_RECIPES, demoBySlug, demoSearch, type DemoRecipe } from "./demoData";
 import type { SearchHit } from "@shared/schema";
 
-export const CATALOG_HOST = "www.eatingonadime.com";
-export const CATALOG_ORIGIN = `https://${CATALOG_HOST}`;
+export type CatalogSource = "eatingonadime" | "ajgreats" | "ketofocus";
+
+type CatalogDefinition = {
+  label: string;
+  host: string;
+  origin: string;
+  kind: "wordpress" | "ketofocus";
+};
+
+export const CATALOGS: Record<CatalogSource, CatalogDefinition> = {
+  eatingonadime: {
+    label: "Eating on a Dime",
+    host: "www.eatingonadime.com",
+    origin: "https://www.eatingonadime.com",
+    kind: "wordpress",
+  },
+  ajgreats: {
+    label: "AJ Greats",
+    host: "ajgreats.com",
+    origin: "https://ajgreats.com",
+    kind: "wordpress",
+  },
+  ketofocus: {
+    label: "KetoFocus",
+    host: "www.ketofocus.com",
+    origin: "https://www.ketofocus.com",
+    kind: "ketofocus",
+  },
+};
+
+export const CATALOG_HOST = CATALOGS.eatingonadime.host;
+export const CATALOG_ORIGIN = CATALOGS.eatingonadime.origin;
 
 const searchCache = new TtlCache<{ hits: SearchHit[]; source: "live" | "demo" }>(10 * 60_000);
 const pageCache = new TtlCache<string>(15 * 60_000, 40);
@@ -30,6 +60,23 @@ type WpPost = {
   yoast_head_json?: { og_image?: { url?: string }[]; description?: string };
 };
 
+type KetoFocusRecipe = {
+  url?: string;
+  title?: string;
+  thumb?: string;
+  image?: string;
+  time?: number | string;
+  carbs?: number | string;
+  courses?: string[];
+};
+
+type KetoFocusResponse = {
+  recipes?: KetoFocusRecipe[];
+  total?: number;
+  offset?: number;
+  remaining?: number;
+};
+
 function demoHits(query: string): SearchHit[] {
   const list: DemoRecipe[] = demoSearch(query);
   return list.map((r) => ({
@@ -40,12 +87,28 @@ function demoHits(query: string): SearchHit[] {
   }));
 }
 
-/** Search the Eating on a Dime catalog. Falls back to demo data when offline. */
-export async function searchCatalog(query: string, page = 1): Promise<CatalogResult> {
-  const key = `${query.toLowerCase().trim()}|${page}`;
-  const cached = searchCache.get(key);
-  if (cached) return { ...cached };
+function wpHits(data: unknown, catalog: CatalogDefinition): SearchHit[] {
+  return (Array.isArray(data) ? (data as WpPost[]) : [])
+    .map((post) => ({
+      title: sanitizeText(post.title?.rendered ?? ""),
+      url: post.link,
+      imageUrl: post.yoast_head_json?.og_image?.[0]?.url ?? null,
+      excerpt: sanitizeText(post.excerpt?.rendered ?? post.yoast_head_json?.description ?? "").slice(0, 220) || null,
+    }))
+    .filter((hit) => {
+      try {
+        return !!hit.title && new URL(hit.url).hostname.toLowerCase().replace(/\.$/, "") === catalog.host;
+      } catch {
+        return false;
+      }
+    });
+}
 
+async function searchWordpressCatalog(
+  catalog: CatalogDefinition,
+  query: string,
+  page: number,
+): Promise<SearchHit[]> {
   const params = new URLSearchParams({
     per_page: "18",
     page: String(page),
@@ -53,21 +116,74 @@ export async function searchCatalog(query: string, page = 1): Promise<CatalogRes
     orderby: query.trim() ? "relevance" : "date",
   });
   if (query.trim()) params.set("search", query.trim());
-  const url = `${CATALOG_ORIGIN}/wp-json/wp/v2/posts?${params.toString()}`;
+  const url = `${catalog.origin}/wp-json/wp/v2/posts?${params.toString()}`;
+  await politeGate(catalog.host);
+  const res = await safeFetch(url, { accept: "application/json", timeoutMs: 10_000 });
+  return wpHits(JSON.parse(res.body), catalog);
+}
+
+async function searchKetoFocus(catalog: CatalogDefinition, query: string, page: number): Promise<SearchHit[]> {
+  const params = new URLSearchParams({
+    per_page: "18",
+    offset: String((page - 1) * 18),
+    sort: query.trim() ? "relevance" : "popular",
+  });
+  if (query.trim()) params.set("search", query.trim());
+  const url = `${catalog.origin}/wp-json/kf/v1/recipes?${params.toString()}`;
+  await politeGate(catalog.host);
+  const res = await safeFetch(url, { accept: "application/json", timeoutMs: 10_000 });
+  const data = JSON.parse(res.body) as KetoFocusResponse;
+  return (Array.isArray(data.recipes) ? data.recipes : [])
+    .map((recipe) => {
+      const details = [
+        recipe.time ? `${sanitizeText(recipe.time)} min` : "",
+        recipe.carbs !== "" && recipe.carbs != null ? `${sanitizeText(recipe.carbs)}g net carbs` : "",
+        ...(Array.isArray(recipe.courses) ? recipe.courses.map((course) => sanitizeText(course)) : []),
+      ].filter(Boolean);
+      return {
+        title: sanitizeText(recipe.title),
+        url: sanitizeText(recipe.url),
+        imageUrl: sanitizeImage(recipe.image ?? recipe.thumb, catalog.origin),
+        excerpt: details.join(" · ") || null,
+      };
+    })
+    .filter((hit) => {
+      try {
+        return !!hit.title && new URL(hit.url).hostname.toLowerCase().replace(/\.$/, "") === catalog.host;
+      } catch {
+        return false;
+      }
+    });
+}
+
+function sanitizeImage(value: unknown, base: string): string | null {
+  const raw = sanitizeText(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, base);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Search a built-in publisher catalog. Eating on a Dime alone has demo data. */
+export async function searchCatalog(
+  query: string,
+  page = 1,
+  source: CatalogSource = "eatingonadime",
+): Promise<CatalogResult> {
+  const catalog = CATALOGS[source];
+  const key = `${source}|${query.toLowerCase().trim()}|${page}`;
+  const cached = searchCache.get(key);
+  if (cached) return { ...cached };
 
   try {
-    await politeGate(CATALOG_HOST);
-    const res = await safeFetch(url, { accept: "application/json", timeoutMs: 10_000 });
-    const data = JSON.parse(res.body) as WpPost[];
-    const hits: SearchHit[] = (Array.isArray(data) ? data : [])
-      .map((post) => ({
-        title: sanitizeText(post.title?.rendered ?? ""),
-        url: post.link,
-        imageUrl: post.yoast_head_json?.og_image?.[0]?.url ?? null,
-        excerpt: sanitizeText(post.excerpt?.rendered ?? post.yoast_head_json?.description ?? "").slice(0, 220) || null,
-      }))
-      .filter((hit) => hit.title && hit.url.startsWith(CATALOG_ORIGIN));
-    if (!hits.length && page === 1) {
+    const hits =
+      catalog.kind === "ketofocus"
+        ? await searchKetoFocus(catalog, query, page)
+        : await searchWordpressCatalog(catalog, query, page);
+    if (!hits.length && page === 1 && source === "eatingonadime") {
       const fallback = { hits: demoHits(query), source: "demo" as const };
       return { ...fallback, notice: "No live results — showing the offline demo catalog." };
     }
@@ -76,6 +192,14 @@ export async function searchCatalog(query: string, page = 1): Promise<CatalogRes
     return result;
   } catch (err) {
     if (err instanceof RateLimited) throw err;
+    if (source !== "eatingonadime") {
+      const fallback = { hits: [], source: "live" as const };
+      searchCache.set(key, fallback, 60_000);
+      return {
+        ...fallback,
+        notice: `${catalog.label} could not be reached. Try again in a moment, or paste an individual recipe URL above.`,
+      };
+    }
     const fallback = { hits: demoHits(query), source: "demo" as const };
     searchCache.set(key, fallback, 60_000);
     return {

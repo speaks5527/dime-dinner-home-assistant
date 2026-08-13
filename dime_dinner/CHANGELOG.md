@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+- Added dedicated browse and search tabs for **AJ Greats** and **KetoFocus**, alongside Eating on a
+  Dime. Results remain on demand, cached, rate limited, attributed to their publisher, and import
+  through the existing schema.org Recipe reader.
+- Fixed ReciMe PDF imports whose section headings include counts or decorative separators.
+- Fixed numbered ReciMe instructions that put the step number on its own line, including methods
+  that continue onto a second page. ReciMe footer URLs and page counters no longer merge into the
+  final instruction.
+- Added regression coverage for the two-page **Marry Me Chicken Pasta** export: title, two servings,
+  11 distinct ingredients, and 11 distinct instruction steps.
+
 ## 1.3.0
 
 **Two-way compatibility with ReciMe.** A compatibility bridge, not an official ReciMe integration:

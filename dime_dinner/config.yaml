@@ -1,9 +1,9 @@
 name: Dime Dinner
-version: "1.3.0"
+version: "1.4.0"
 slug: dime_dinner
 description: >-
   Meal planner, recipe box, grocery list and pantry for Home Assistant. Browse
-  Eating on a Dime, import recipes from any public recipe page or from a PDF
+  Eating on a Dime, AJ Greats and KetoFocus, import recipes from any public recipe page or from a PDF
   cookbook (scanned ones included), plan lunch and dinner for the week, and
   build a grocery list that respects your pantry.
 url: https://github.com/speaks5527/dime-dinner-home-assistant

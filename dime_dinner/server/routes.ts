@@ -4,7 +4,13 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { aggregateIngredients, applyPantry, visibleLines } from "./lib/grocery";
 import { parseIngredientLine, formatAmount } from "./lib/ingredients";
-import { importFromUrl, searchCatalog, FetchRejected, RateLimited } from "./lib/source";
+import {
+  importFromUrl,
+  searchCatalog,
+  FetchRejected,
+  RateLimited,
+  type CatalogSource,
+} from "./lib/source";
 import { KrogerError, KROGER_DISCLAIMER, matchProducts, resolveLocation, resetKrogerCaches } from "./lib/kroger";
 import {
   authStatus,
@@ -270,7 +276,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const query = sanitizeText(String(req.query.q ?? "")).slice(0, 80);
       const page = Math.min(Math.max(Number(req.query.page ?? 1) || 1, 1), 10);
-      const result = await searchCatalog(query, page);
+      const requestedSource = String(req.query.source ?? "eatingonadime");
+      const source: CatalogSource =
+        requestedSource === "ajgreats" || requestedSource === "ketofocus"
+          ? requestedSource
+          : "eatingonadime";
+      const result = await searchCatalog(query, page, source);
       const saved = storage.listRecipes();
       const byUrl = new Map(saved.map((r) => [r.sourceUrl.replace(/\/+$/, ""), r.id]));
       const payload: SearchResponse = {
@@ -1032,7 +1043,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       days: DAY_NAMES,
       meals: MEALS,
       attribution:
-        "Recipes are fetched on demand from their publishers. Eating on a Dime is the built-in browse source. Dime Dinner is an independent personal tool and is not affiliated with, endorsed by, or sponsored by Eating on a Dime, Kroger, or Skylight.",
+        "Recipes are fetched on demand from their publishers. Eating on a Dime, AJ Greats, and KetoFocus are built-in browse sources. Dime Dinner is an independent personal tool and is not affiliated with, endorsed by, or sponsored by those publishers, Kroger, or Skylight.",
     });
   });
 

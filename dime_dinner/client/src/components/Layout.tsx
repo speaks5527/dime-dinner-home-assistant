@@ -81,7 +81,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <NavLinks />
         <div className="mt-auto space-y-3 pt-6">
           <div className="rounded-md border border-sidebar-border bg-background/40 p-3 text-[11px] leading-relaxed text-muted-foreground">
-            Recipes are fetched from their publishers on demand. Browse is powered by Eating on a Dime. Independent
+            Recipes are fetched from their publishers on demand. Browse includes Eating on a Dime, AJ Greats, and KetoFocus. Independent
             tool — not affiliated with any publisher or retailer.
           </div>
           <div className="flex items-center justify-between">
