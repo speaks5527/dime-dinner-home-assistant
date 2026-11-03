@@ -259,6 +259,9 @@ export function formatQuantity(value: number): string {
   const rounded = Math.round(value * 1000) / 1000;
   const whole = Math.floor(rounded + 1e-9);
   const frac = rounded - whole;
+  for (const [part, label] of [[1 / 3, "1/3"], [2 / 3, "2/3"]] as const) {
+    if (Math.abs(frac - part) < 0.002) return whole > 0 ? `${whole} ${label}` : label;
+  }
   const eighths = Math.round(frac * 8);
   const nice: Record<number, string> = { 1: "1/8", 2: "1/4", 3: "3/8", 4: "1/2", 5: "5/8", 6: "3/4", 7: "7/8" };
   if (Math.abs(frac * 8 - eighths) < 0.06 && eighths > 0 && eighths < 8) {
@@ -365,7 +368,9 @@ export function singularize(word: string): string {
 /** Stable matching key: lowercase, de-pluralized, descriptor-free. */
 export function normalizeName(name: string): string {
   let s = name.toLowerCase();
-  s = s.replace(/\([^)]*\)/g, " ");
+  s = s.replace(/\(([^)]*)\)/g, (_match, inner: string) =>
+    isParentheticalNote(inner) ? " " : ` ${inner} `,
+  );
   for (const re of TRAILING_NOISE) s = s.replace(re, " ");
   s = s.replace(/[^a-z0-9%\s-]/g, " ").replace(/\s+/g, " ").trim();
   let words = s.split(" ").filter(Boolean);
@@ -430,6 +435,8 @@ const AISLE_RULES: [Aisle, string[]][] = [
 
 export function aisleFor(nameKey: string): Aisle {
   const n = ` ${nameKey.toLowerCase()} `;
+  // The animal describes the broth, not a cut of meat.
+  if (/\b(?:broth|stock|soup)\b/.test(n)) return "Canned & Jarred";
   // Spices win over produce for "garlic powder", but the *longest* keyword always
   // wins first, so "bell pepper" lands in Produce rather than with the peppercorns.
   const priority: Aisle[] = [
@@ -478,6 +485,14 @@ export type ParsedIngredient = {
 const PREP_TAIL_RE =
   /^(?:finely|freshly|coarsely|thinly|roughly|lightly|chopped|diced|minced|sliced|shredded|grated|crushed|melted|softened|divided|drained|rinsed|cubed|halved|quartered|peeled|seeded|cored|trimmed|thawed|beaten|room temperature|cut\b|plus\b|more\b|optional|to taste|for (?:garnish|serving|topping)|about\b|approximately\b|any\b|such as\b|or\b|packed\b|drained and\b|well drained)/i;
 
+/** Only discard recognizable notes; publishers sometimes put the food itself in parentheses. */
+function isParentheticalNote(text: string): boolean {
+  const value = text.trim();
+  if (/^(?:[$£€]\s*\d|\d+(?:\.\d+|\s+\d+\/\d+|\/\d+)?\s*(?:oz|ounce|ounces|lb|pound|pounds|g|gram|grams|kg|ml|l)\b)/i.test(value)) return true;
+  if (/^(?:cut\s+into|for\s+(?:garnish|serving|topping)|to\s+taste|optional\b|plus\s+more|if\s+(?:desired|needed|using))/i.test(value)) return true;
+  return /^(?:(?:finely|freshly|coarsely|thinly|roughly|lightly|well)\s+)?(?:chopped|diced|minced|sliced|shredded|grated|crushed|melted|softened|divided|drained|rinsed|cubed|halved|quartered|peeled|seeded|cored|trimmed|thawed|beaten|packed|room temperature)(?:\s+and\s+(?:drained|rinsed|chopped))?$/i.test(value);
+}
+
 /**
  * Parse one published ingredient line into structured parts.
  *
@@ -491,8 +506,9 @@ const PREP_TAIL_RE =
 export function parseIngredientLine(raw: string): ParsedIngredient {
   const original = raw.replace(/\s+/g, " ").trim();
   const notes: string[] = [];
-  // pull out parentheticals as notes but keep container sizes visible
+  // Remove preparation/size notes while retaining parenthetical food names.
   let working = normalizeUnicodeNumbers(original).replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+    if (!isParentheticalNote(inner)) return ` ${inner} `;
     notes.push(String(inner).trim());
     return " ";
   });
@@ -588,6 +604,10 @@ export function fromBase(dimension: Dimension, value: number, system: "us" | "me
   let fallback: Amount | null = null;
   for (const unit of ladder) {
     const def = UNIT_BY_CANONICAL.get(unit)!;
+    const cupQuantity = value / def.factor;
+    if (unit === "cup" && cupQuantity < 1 && [1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4].some((part) => Math.abs(cupQuantity - part) < 0.002)) {
+      return { quantity: round(cupQuantity, 3), unit };
+    }
     if (value < def.factor - 1e-9) continue;
     const quantity = round(value / def.factor, 3);
     if (fallback === null) fallback = { quantity, unit };
