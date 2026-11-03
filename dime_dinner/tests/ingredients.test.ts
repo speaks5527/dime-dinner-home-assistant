@@ -136,6 +136,28 @@ describe("amount math", () => {
 });
 
 describe("real-world lines seen in the wild", () => {
+  it("retains food names inside parentheses instead of shopping for boneless", () => {
+    const parsed = parseIngredientLine("2 large boneless (skinless chicken breasts)");
+    expect(parsed.quantity).toBe(2);
+    expect(parsed.unit).toBeNull();
+    expect(parsed.key).toBe("boneless skinless chicken breast");
+    expect(parsed.aisle).toBe("Meat & Seafood");
+    expect(normalizeName("large boneless (skinless chicken breasts)")).toBe(parsed.key);
+    expect(parseIngredientLine("1 cup (heavy cream)").key).toBe("heavy cream");
+    expect(parseIngredientLine("1 cup chicken (finely chopped)").key).toBe("chicken");
+  });
+
+  it("classifies broth by product rather than animal", () => {
+    expect(parseIngredientLine("1 1/2 cups chicken broth").aisle).toBe("Canned & Jarred");
+    expect(aisleFor("beef stock")).toBe("Canned & Jarred");
+    expect(aisleFor("chicken breast")).toBe("Meat & Seafood");
+  });
+
+  it("keeps common fractional cups readable after combining", () => {
+    const combined = combineAmounts([{ quantity: 1 / 3, unit: "cup" }]);
+    expect(formatAmounts(combined.amounts)).toBe("1/3 cup");
+    expect(formatQuantity(2 / 3)).toBe("2/3");
+  });
   it("keeps compound names split by commas together", () => {
     const parsed = parseIngredientLine("3/4 lb. boneless, skinless chicken breast ($2.09)");
     expect(parsed.key).toBe("boneless skinless chicken breast");
