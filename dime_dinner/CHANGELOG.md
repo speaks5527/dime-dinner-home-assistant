@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1
+
+- Preserve ingredient names inside parentheses while keeping preparation and package-size notes separate.
+- Classify broth, stock and soup in Canned & Jarred rather than by their meat ingredient.
+- Keep common fractional cups readable, including 1/3 cup, in grocery totals.
+- Add regression coverage; all 35 ingredient and grocery tests pass.
+
 ## 1.4.0
 
 - Added dedicated browse and search tabs for **AJ Greats** and **KetoFocus**, alongside Eating on a
